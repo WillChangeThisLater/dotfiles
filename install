@@ -1,0 +1,23 @@
+tools:
+******
+- lsof
+- llm (WillChangeThisLater)
+- fzf
+- tcpdump
+- uv
+
+
+languages:
+**********
+- c
+- go
+- python
+
+core tools:
+***********
+- browser (firefox)
+- docker
+- git
+- editor (neovim)
+- mitmproxy
+- ssh
