@@ -1,0 +1,14 @@
+## Important Packages
+
+- [lazy.nvim](https://github.com/folke/lazy.nvim) for installing required packages lazily
+- [cmp-setup](https://github.com/hrsh7th/nvim-cmp) for autocomplete
+- [mason](https://github.com/williamboman/mason.nvim) and [mason-lsp](https://github.com/williamboman/mason-lspconfig.nvim) for managing LSP setup and config
+- [onedark](https://github.com/navarasu/onedark.nvim) for theme
+- [lualine](https://github.com/nvim-lualine/lualine.nvim) for the status line
+- [telescope](https://github.com/nvim-telescope/telescope.nvim) for list selection (like `fzf` for but for neovim)
+- [treesitter](https://github.com/nvim-treesitter/nvim-treesitter) for providing commands over an AST. This is a weird but powerful one. Looks like I can do something like 'yac' to yank a class definition, 'yaf' to yank a function, etc. Probably worth doing a deeper dive into what this offers at some point
+
+## Support Packages
+- [indent-blankline](https://github.com/lukas-reineke/indent-blankline.nvim) for adding indentation line guides
+- [plenary](https://github.com/nvim-lua/plenary.nvim) coroutine library. this is relied on indirectly by a ton of packages (including telescope)
+- [which-key](https://github.com/folke/which-key.nvim) for showing keybindings

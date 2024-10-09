@@ -1,13 +1,14 @@
-# kickstart.nvim
+# kickstart-modular.nvim
 
 https://github.com/kdheepak/kickstart.nvim/assets/1813121/f3ff9a2b-c31f-44df-a4fa-8a0d7b17cf7b
 
 ### Introduction
 
+*This is a fork of [nvim-lua/kickstart.nvim](https://github.com/nvim-lua/kickstart.nvim) that moves from a single file to a multi file configuration.*
+
 A starting point for Neovim that is:
 
 * Small
-* Single-file (with examples of moving to multi-file)
 * Documented
 * Modular
 
@@ -41,17 +42,17 @@ Clone kickstart.nvim:
 
 - on Linux and Mac
 ```sh
-git clone https://github.com/nvim-lua/kickstart.nvim.git "${XDG_CONFIG_HOME:-$HOME/.config}"/nvim
+git clone https://github.com/dam9000/kickstart-modular.nvim.git "${XDG_CONFIG_HOME:-$HOME/.config}"/nvim
 ```
 
 - on Windows (cmd)
 ```
-git clone https://github.com/nvim-lua/kickstart.nvim.git %userprofile%\AppData\Local\nvim\ 
+git clone https://github.com/dam9000/kickstart-modular.nvim.git %userprofile%\AppData\Local\nvim\
 ```
 
 - on Windows (powershell)
 ```
-git clone https://github.com/nvim-lua/kickstart.nvim.git $env:USERPROFILE\AppData\Local\nvim\ 
+git clone https://github.com/dam9000/kickstart-modular.nvim.git $env:USERPROFILE\AppData\Local\nvim\
 ```
 
 
@@ -80,14 +81,14 @@ See [Effective Neovim: Instant IDE](https://youtu.be/stqUbv-5u2s), covering the 
 [Fork](https://docs.github.com/en/get-started/quickstart/fork-a-repo) this repo (so that you have your own copy that you can modify) and then installing you can install to your machine using the methods above.
 
 > **NOTE**  
-> Your fork's url will be something like this: `https://github.com/<your_github_username>/kickstart.nvim.git`
+> Your fork's url will be something like this: `https://github.com/<your_github_username>/kickstart-modular.nvim.git`
 
 ### Configuration And Extension
 
 * Inside of your copy, feel free to modify any file you like! It's your copy!
 * Feel free to change any of the default options in `init.lua` to better suit your needs.
 * For adding plugins, there are 3 primary options:
-  * Add new configuration in `lua/custom/plugins/*` files, which will be auto sourced using `lazy.nvim` (uncomment the line importing the `custom/plugins` directory in the `init.lua` file to enable this)
+  * Add new configuration in `lua/custom/plugins/*` files, which will be auto sourced using `lazy.nvim` (uncomment the line importing the `custom/plugins` directory in the `lua/lazy-plugins.lua` file to enable this)
   * Modify `init.lua` with additional plugins.
   * Include the `lua/kickstart/plugins/*` files in your configuration.
 
@@ -171,9 +172,10 @@ Each PR, especially those which increase the line count, should have a descripti
   * The main purpose of kickstart is to serve as a teaching tool and a reference
     configuration that someone can easily `git clone` as a basis for their own.
     As you progress in learning Neovim and Lua, you might consider splitting `init.lua`
-    into smaller parts. A fork of kickstart that does this while maintaining the exact
-    same functionality is available here:
-    * [kickstart-modular.nvim](https://github.com/dam9000/kickstart-modular.nvim)
+    into smaller parts. *This is the fork of the original project that splits the configuration into smaller parts.*
+    The original repo that maintains the exact
+    same functionality in a single `init.lua` file is available here:
+    * [kickstart.nvim](https://github.com/dam9000/kickstart-modular.nvim)
   * Discussions on this topic can be found here:
     * [Restructure the configuration](https://github.com/nvim-lua/kickstart.nvim/issues/218)
     * [Reorganize init.lua into a multi-file setup](https://github.com/nvim-lua/kickstart.nvim/pull/473)

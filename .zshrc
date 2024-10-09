@@ -126,8 +126,7 @@ set -o vi # set CLI to vim mode
 # environment variables
 export NVM_DIR=~/.nvm
 export TMUX_VERSION=3.3 # required for some esoteric commands in ~/.tmux.conf
-export HISTSIZE=1000000 # https://unix.stackexchange.com/questions/273861/unlimited-history-in-zsh
-export SAVEHIST=1000000 # https://unix.stackexchange.com/questions/273861/unlimited-history-in-zsh
+export HISTSIZE=1000000 # https://unix.stackexchange.com/questions/273861/unlimited-history-in-zsh export SAVEHIST=1000000 # https://unix.stackexchange.com/questions/273861/unlimited-history-in-zsh
 export EDITOR=vi        # MITM proxy
 export OS=$(sysctl -a | grep ostype | awk '{print $NF}')
 
@@ -315,3 +314,67 @@ mkdir -p /usr/local/share/databases/live
 # comment back in if shell startup is slow and you want to see why
 #zprof
 #
+
+# Created by `pipx` on 2024-09-27 23:57:33
+export PATH="$PATH:/Users/paulwendt/.local/bin"
+alias ngrokURL="curl http://localhost:4040/api/tunnels 2>/dev/null | jq -r '.tunnels[0].public_url'"
+
+# debug
+debug() {
+  numLines=20
+  tmux capture-pane -pS -"$numLines" > /tmp/screenshot.txt
+  cat <<EOF
+Debugging. It might take 10-15 seconds for a response to appear
+If you think the prompt is wrong check /tmp/prompt.txt"
+If you want to change the prompt check ~/.bashrc
+
+EOF
+
+  cat << EOF > /tmp/prompt.txt
+Output from a terminal session is below.
+I'd like you to help debug it
+
+Step by step, walk through how to debug the most recent
+error in the terminal session.
+Be simple. Use clear language. Be concise. Provide commands
+the user can run to debug and fix the error if you can.
+
+Focus on the last error in the session. Mention relevant errors
+from earlier in the session only if they are relevant.
+
+If you think there are no errors, explain why you think that.
+
+Some times the error might not be obvious, and you will
+have to use reasoning to figure out what the confusion is.
+For instance, although the bash output below has no explicit
+errors, it is clear from the context that the user is confused
+why the pgrep command for a PID returns no results, while a
+combination of 'ps -a' and grep indicates the PID exists.
+
+\`\`\`bash
+[arch@archlinux link-embedder]$ pgrep 1757501
+[arch@archlinux link-embedder]$ ps -a | grep 1757501
+1757501 pts/11   00:00:00 sleep
+\`\`\`
+
+Just to reiterate: only focus on THE MOST RECENT error.
+For instance, if you see a session like this
+
+\`\`\`bash
+[arch@archlinux tmp]$ l
+-bash: l: command not found
+[arch@archlinux tmp]$ cat /var/sock/d
+cat: /var/sock/d: No such file or directory
+\`\`\`
+
+ONLY focus on the most recent error (cat: /var/sock/d: No such file or directory)
+Do NOT comment on the '-bash: l: command not found' error UNLESS it relates
+to the (cat: /var/sock/d: No such file or directory) error in some way.
+
+\`\`\`bash
+$(cat /tmp/screenshot.txt)
+\`\`\`
+EOF
+
+cat /tmp/prompt.txt | lm
+}
