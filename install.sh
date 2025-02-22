@@ -1,3 +1,3 @@
 #!/bin/bash
 
-stow neovim oh-my-zsh tmux vim zsh
+stow -t ~ neovim oh-my-zsh tmux vim zsh
