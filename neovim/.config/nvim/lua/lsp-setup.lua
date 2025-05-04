@@ -84,7 +84,7 @@ local servers = {
   helm_ls = {},
   html = { filetypes = { 'html'} },
   --htmx = {}, -- install for this is not working for some reason
-  jsonls = {},
+  json_lsp = {},
   jqls = {},
   lua_ls = {
     Lua = {
