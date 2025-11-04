@@ -21,7 +21,7 @@ export ZSH="$HOME/.oh-my-zsh"
 # Setting this variable when ZSH_THEME=random will cause zsh to load
 # a theme from this variable instead of looking in $ZSH/themes/
 # If set to an empty array, this variable will have no effect.
-# ZSH_THEME_RANDOM_CANDIDATES=( "robbyrussell" "agnoster" )
+ZSH_THEME_RANDOM_CANDIDATES=( "robbyrussell" )
 
 # Uncomment the following line to use case-sensitive completion.
 # CASE_SENSITIVE="true"
@@ -130,6 +130,10 @@ export HISTSIZE=1000000 # https://unix.stackexchange.com/questions/273861/unlimi
 export EDITOR=vi        # MITM proxy
 export OS=$(sysctl -a | grep ostype | awk '{print $NF}')
 
+# make atuin available
+# maybe we don't need this?
+# source ~/.atuin/bin/atuin
+
 # aliases
 # rename_branch is symlinked to /Users/paulwendt/utils/bash/rename_branch.sh
 # push_branch just exists in /usr/local/bin. Not sure why I made it there
@@ -201,7 +205,10 @@ function proxy() {
     echo "Nothing listening on $PORT!"
   else
     echo "Running '${@:1}' using mitmproxy listening on port $PORT" >&2
-    http_proxy=http://localhost:"$PORT" https_proxy=https://localhost:"$PORT" REQUESTS_CA_BUNDLE=/Users/paulwendt/.mitmproxy/mitmproxy-ca-cert.pem $@
+    #http_proxy=http://localhost:"$PORT" https_proxy=https://localhost:"$PORT" SSL_CERT_FILE=/Users/paul.wendt/.mitmproxy/mitmproxy-ca-cert.pem REQUESTS_CA_BUNDLE=/Users/paul.wendt/.mitmproxy/mitmproxy-ca-cert.pem $@
+    # TODO: for golang, the https proxy MUST use http://
+    # not sure if this impacts other things...
+    http_proxy=http://localhost:"$PORT" https_proxy=http://localhost:"$PORT" SSL_CERT_FILE=/Users/paul.wendt/.mitmproxy/mitmproxy-ca-cert.pem REQUESTS_CA_BUNDLE=/Users/paul.wendt/.mitmproxy/mitmproxy-ca-cert.pem $@
   fi
 }
 
@@ -304,20 +311,12 @@ function document() {
   echo '```'
 }
 
-alias screenshot='echo ~/Desktop/"$(ls -t1 ~/Desktop/ | head -n 1)"'
-
-# for local database management
-mkdir -p /usr/local/share/databases/backup
-mkdir -p /usr/local/share/databases/live
+alias screenshot='echo ~/screenshots/"$(ls -t1 ~/screenshots/ | head -n 1)"'
 
 # ~/.zshrc profiling
 # comment back in if shell startup is slow and you want to see why
 #zprof
 #
-
-# Created by `pipx` on 2024-09-27 23:57:33
-export PATH="$PATH:/Users/paulwendt/.local/bin"
-alias ngrokURL="curl http://localhost:4040/api/tunnels 2>/dev/null | jq -r '.tunnels[0].public_url'"
 
 # debug
 debug() {
@@ -378,3 +377,70 @@ EOF
 
 cat /tmp/prompt.txt | lm
 }
+
+. "$HOME/.atuin/bin/env"
+eval "$(atuin init zsh --disable-up-arrow)"
+
+. "$HOME/.local/bin/env"
+
+okta() {
+  # use a subshell to supress messages
+  PROFILES="/Users/paul.wendt/personal-repos/okta-login/profiles.json"
+  (/bin/bash /Users/paul.wendt/personal-repos/okta-login/okta_login.sh /Users/paul.wendt/personal-repos/okta-login/profiles.json >/tmp/okta.log 2>&1 &)
+}
+
+aws_login() {
+  PROFILES="/Users/paul.wendt/personal-repos/okta-login/profiles.json"
+  /Users/paul.wendt/personal-repos/okta-login/aws_login.sh "$1" "$PROFILES"
+}
+
+# apparently nvm needs this
+export NVM_DIR="$HOME/.nvm"
+[ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"  # This loads nvm
+[ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"  # This loads nvm bash_completion
+
+# apparently this configured dex to use saml2aws
+export SS_DEFAULT_SAML_APP=saml2aws
+
+. ~/.dx-zsh-completion.sh
+
+alias site-scrape="lynx -dump"
+
+alias dev="source /Users/paul.wendt/venvs/dev/.venv/bin/activate"
+
+source virtualenvwrapper.sh
+
+# add ~/go/bin to PATH
+export PATH="$HOME/go/bin:$PATH"
+
+
+# add rust to PATH
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# awashcli wrapper function
+source ~/.awashcli.sh
+
+
+# Added by Windsurf
+export PATH="/Users/paul.wendt/.codeium/windsurf/bin:$PATH"
+
+# other things
+alias fs="osascript /Users/paul.wendt/personal-repos/apple-scripts/firefox-screenshot.applescript"
+
+
+# BEGIN opam configuration
+# This is useful if you're using opam as it adds:
+#   - the correct directories to the PATH
+#   - auto-completion for the opam binary
+# This section can be safely removed at any time if needed.
+[[ ! -r '/Users/paul.wendt/.opam/opam-init/init.zsh' ]] || source '/Users/paul.wendt/.opam/opam-init/init.zsh' > /dev/null 2> /dev/null
+# END opam configuration
+
+# llm needs this
+export AWS_REGION=us-east-1
+alias s='source .venv/bin/activate'
+
+# tellr: tell | llm "cleanup"
+#alias tellr='tell | llm "this is a text to speech transcript from a user. clean up this transcript. remove fillers such as like and um. fix grammar when needed. also respond to user directives. if a user tells you to forget something, forget it. if a user tells you to reformat a specific thought, reformat it, etc. do NOT provide any comments on what changes you make - edit the transcript as if it were in the users words"'
+alias codex='codex --dangerously-bypass-approvals-and-sandbox'
+alias firefox="/Applications/Firefox.app/Contents/MacOS/firefox"

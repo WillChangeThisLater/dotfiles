@@ -74,3 +74,13 @@ require 'cmp-setup'
 
 -- The line beneath this is called `modeline`. See `:help modeline`
 -- vim: ts=2 sts=2 sw=2 et
+--
+-- chat setup
+require("chat").setup({
+  max_lines = 1000,
+  llm_cmd   = { "llm" },        -- e.g., { "llm", "--model", "gpt5" }
+  stream    = true,            -- set true if your `llm` streams
+})
+
+-- support .mdai
+require('custom.markdown')

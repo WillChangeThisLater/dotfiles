@@ -84,7 +84,7 @@ local servers = {
   helm_ls = {},
   html = { filetypes = { 'html'} },
   --htmx = {}, -- install for this is not working for some reason
-  json_lsp = {},
+  jsonls = {},
   jqls = {},
   lua_ls = {
     Lua = {
@@ -94,9 +94,12 @@ local servers = {
       -- diagnostics = { disable = { 'missing-fields' } },
     },
   },
-  marksman = {},
+  marksman = {
+    filetypes = { "markdown", "markdown.mdai" }, -- Add .mdai support
+  },
   pyright = {},
   quick_lint_js = {},
+  tsserver = {},
   sqlls = {},
   tailwindcss = {},
 }
@@ -125,5 +128,37 @@ mason_lspconfig.setup_handlers {
     }
   end,
 }
+
+-- Linters
+-- https://github.com/VonHeikemen/nvim-starter/blob/xx-mason/init.lua
+-- local lspconfig = require('lspconfig')
+-- local lsp_capabilities = require('cmp_nvim_lsp').default_capabilities()
+-- 
+-- require('mason-lspconfig').setup({
+--   ensure_installed = {
+--     'tsserver',
+--     'eslint',
+--     'html',
+--     'cssls'
+--   },
+--   handlers = {
+--     function(server)
+--       lspconfig[server].setup({
+--         capabilities = lsp_capabilities,
+--       })
+--     end,
+--     ['tsserver'] = function()
+--       lspconfig.tsserver.setup({
+--         capabilities = lsp_capabilities,
+--         settings = {
+--           completions = {
+--             completeFunctionCalls = true
+--           }
+--         }
+--       })
+--     end
+--   }
+-- })
+-- 
 
 -- vim: ts=2 sts=2 sw=2 et
