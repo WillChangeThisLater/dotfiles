@@ -128,7 +128,7 @@ export NVM_DIR=~/.nvm
 export TMUX_VERSION=3.3 # required for some esoteric commands in ~/.tmux.conf
 export HISTSIZE=1000000 # https://unix.stackexchange.com/questions/273861/unlimited-history-in-zsh export SAVEHIST=1000000 # https://unix.stackexchange.com/questions/273861/unlimited-history-in-zsh
 export EDITOR=vi        # MITM proxy
-export OS=$(sysctl -a | grep ostype | awk '{print $NF}')
+#export OS=$(sysctl -a | grep ostype | awk '{print $NF}')
 
 # make atuin available
 # maybe we don't need this?
@@ -261,8 +261,6 @@ function dockershellshhere() {
 for file in .zshrc-sensitive .zshrc-data-platform .zshrc-gpt .zsh-digraphs.sh; do
   if test -f ~/$file; then
     source ~/$file
-  else
-    echo ".zshrc: ~/$file does not exist (not sourcing)" >&2
   fi
 done
 
@@ -378,7 +376,8 @@ EOF
 cat /tmp/prompt.txt | lm
 }
 
-. "$HOME/.atuin/bin/env"
+# TODO: not sure why i have to comment this out
+#. "$HOME/.atuin/bin/env"
 eval "$(atuin init zsh --disable-up-arrow)"
 
 . "$HOME/.local/bin/env"
@@ -402,13 +401,9 @@ export NVM_DIR="$HOME/.nvm"
 # apparently this configured dex to use saml2aws
 export SS_DEFAULT_SAML_APP=saml2aws
 
-. ~/.dx-zsh-completion.sh
-
 alias site-scrape="lynx -dump"
 
 alias dev="source /Users/paul.wendt/venvs/dev/.venv/bin/activate"
-
-source virtualenvwrapper.sh
 
 # add ~/go/bin to PATH
 export PATH="$HOME/go/bin:$PATH"
@@ -417,8 +412,6 @@ export PATH="$HOME/go/bin:$PATH"
 # add rust to PATH
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# awashcli wrapper function
-source ~/.awashcli.sh
 
 
 # Added by Windsurf
@@ -442,5 +435,5 @@ alias s='source .venv/bin/activate'
 
 # tellr: tell | llm "cleanup"
 #alias tellr='tell | llm "this is a text to speech transcript from a user. clean up this transcript. remove fillers such as like and um. fix grammar when needed. also respond to user directives. if a user tells you to forget something, forget it. if a user tells you to reformat a specific thought, reformat it, etc. do NOT provide any comments on what changes you make - edit the transcript as if it were in the users words"'
-alias codex='codex --dangerously-bypass-approvals-and-sandbox'
+#alias codex='codex --dangerously-bypass-approvals-and-sandbox'
 alias firefox="/Applications/Firefox.app/Contents/MacOS/firefox"

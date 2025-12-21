@@ -1,0 +1,29 @@
+# model defaults
+model = "gpt-5.1-codex-mini"
+model_reasoning_effort = "medium"
+
+# live dangerously
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[projects."/home/paul/repos/codex"]
+trust_level = "trusted"
+
+[projects."/home/paul/repos/sam-audio"]
+trust_level = "trusted"
+
+[projects."/home/paul"]
+trust_level = "trusted"
+
+[projects."/home/paul/repos/dotfiles"]
+trust_level = "trusted"
+
+[projects."/home/paul/repos/models/dolphin"]
+trust_level = "trusted"
+
+[features]
+apply_patch_freeform = true
+view_image_tool = true
+web_search_request = true
+unified_exec = true
+streamable_shell = true

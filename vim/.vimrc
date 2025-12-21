@@ -2,7 +2,6 @@
 :set ruler
 :set backspace=indent,eol,start
 :set history=100
-:syntax on
 
 map <F5> <Esc>:w<CR>:!clear;lua %<CR>
 map <F6> <Esc>:w<CR>:!clear;python3 %<CR>
