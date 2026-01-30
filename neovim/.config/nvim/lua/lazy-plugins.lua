@@ -175,6 +175,9 @@ require('lazy').setup({
     opts = {},
   },
 
+  -- Icon provider used by which-key
+  { 'echasnovski/mini.icons', opts = {} },
+
   -- "gc" to comment visual regions/lines
   { 'numToStr/Comment.nvim', opts = {} },
 
