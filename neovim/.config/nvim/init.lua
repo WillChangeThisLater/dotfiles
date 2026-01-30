@@ -44,6 +44,66 @@ P.S. You can delete this when you're done too. It's your config now :)
 vim.g.mapleader = ' '
 vim.g.maplocalleader = ' '
 
+local function ensure_bin_on_path(bin_dir)
+  if not bin_dir or bin_dir == '' then
+    return
+  end
+
+  local normalized = vim.fn.fnamemodify(bin_dir, ':p')
+  if normalized == '' or vim.loop.fs_stat(normalized) == nil then
+    return
+  end
+
+  local path = vim.env.PATH or ''
+  for segment in string.gmatch(path, '([^:]+)') do
+    if segment == normalized then
+      return
+    end
+  end
+
+  vim.env.PATH = normalized .. (path == '' and '' or ':' .. path)
+end
+
+local function collect_nvm_bins()
+  local nvm_versions = vim.fn.expand '$HOME/.nvm/versions/node'
+  if nvm_versions == '' then
+    return {}
+  end
+
+  local versions_pattern = nvm_versions .. '/*/bin'
+  local node_versions = vim.fn.glob(versions_pattern, false, true)
+
+  if vim.tbl_isempty(node_versions) then
+    local fallback = vim.env.HOME and (vim.env.HOME .. '/.nvm/bin') or nil
+    if fallback and vim.loop.fs_stat(fallback) then
+      return { fallback }
+    end
+  end
+
+  return node_versions
+end
+
+local candidates = {
+  vim.fn.getenv 'NVM_BIN',
+  vim.fn.expand '$HOME/.cargo/bin',
+  vim.fn.expand '$HOME/go/bin',
+  '/usr/local/go/bin',
+  '/usr/bin',
+}
+
+for _, nvm_bin in ipairs(collect_nvm_bins()) do
+  table.insert(candidates, nvm_bin)
+end
+
+for _, candidate in ipairs(candidates) do
+  ensure_bin_on_path(candidate)
+end
+
+vim.opt.shortmess:append("I")
+vim.opt.shortmess:append("c")
+
+require('compat')
+
 -- [[ Install `lazy.nvim` plugin manager ]]
 require 'lazy-bootstrap'
 
@@ -83,4 +143,4 @@ require("chat").setup({
 })
 
 -- support .mdai
-require('custom.markdown')
+-- require('custom.markdown')

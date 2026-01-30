@@ -27,3 +27,7 @@ view_image_tool = true
 web_search_request = true
 unified_exec = true
 streamable_shell = true
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["@playwright/mcp@latest"]

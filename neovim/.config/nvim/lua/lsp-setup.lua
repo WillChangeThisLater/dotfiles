@@ -60,7 +60,6 @@ require('which-key').register {
 -- required for visual <leader>hs (hunk stage) to work
 require('which-key').register({
   ['<leader>'] = { name = 'VISUAL <leader>' },
-  ['<leader>h'] = { 'Git [H]unk' },
 }, { mode = 'v' })
 
 -- mason-lspconfig requires that these setup functions are called in this order
@@ -118,16 +117,23 @@ mason_lspconfig.setup {
   ensure_installed = vim.tbl_keys(servers),
 }
 
-mason_lspconfig.setup_handlers {
-  function(server_name)
-    require('lspconfig')[server_name].setup {
-      capabilities = capabilities,
-      on_attach = on_attach,
-      settings = servers[server_name],
-      filetypes = (servers[server_name] or {}).filetypes,
-    }
-  end,
-}
+local lsp_config = vim.lsp.config
+
+vim.lsp.config('*', {
+  capabilities = capabilities,
+  on_attach = on_attach,
+})
+
+for server_name, custom_settings in pairs(servers) do
+  local server_opts = vim.tbl_deep_extend('force', {
+    capabilities = capabilities,
+    on_attach = on_attach,
+  }, vim.deepcopy(custom_settings or {}))
+
+  vim.lsp.config(server_name, server_opts)
+end
+
+vim.lsp.enable(vim.tbl_keys(servers))
 
 -- Linters
 -- https://github.com/VonHeikemen/nvim-starter/blob/xx-mason/init.lua
