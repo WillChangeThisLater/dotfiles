@@ -437,3 +437,30 @@ alias s='source .venv/bin/activate'
 #alias tellr='tell | llm "this is a text to speech transcript from a user. clean up this transcript. remove fillers such as like and um. fix grammar when needed. also respond to user directives. if a user tells you to forget something, forget it. if a user tells you to reformat a specific thought, reformat it, etc. do NOT provide any comments on what changes you make - edit the transcript as if it were in the users words"'
 #alias codex='codex --dangerously-bypass-approvals-and-sandbox'
 alias firefox="/Applications/Firefox.app/Contents/MacOS/firefox"
+
+# Start ssh-agent if not already running
+if ! pgrep -u "$USER" ssh-agent > /dev/null; then
+    eval "$(ssh-agent -s)"
+    sleep 1
+fi
+
+# make sure SSH_AUTH_SOCK is set
+if [[ -z "$SSH_AUTH_SOCK" ]]; then
+    export SSH_AUTH_SOCK=$(find /tmp -type s -name "agent.*" 2>/dev/null | head -n 1)  # Get the first matching socket
+fi
+
+# Add all SSH keys in ~/.ssh including GitHub key
+# For shell globbing: don't complain if one of the expansions below does not return anything
+setopt +o nomatch
+for key in ~/.ssh/*.pem ~/.ssh/id_rsa ~/.ssh/id_ed25519 ~/.ssh/github; do
+    [ -f "$key" ] && ssh-add "$key" >/dev/null 2>&1
+done
+setopt -o nomatch
+
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+alias fp="files-to-prompt"
+
+alias recent_screenshot='ls -t ~/Pictures/Screenshots | head -n 1 | xargs -I {} echo ~/Pictures/Screenshots/{}'

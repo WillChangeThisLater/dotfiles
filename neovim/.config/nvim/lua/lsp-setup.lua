@@ -45,22 +45,28 @@ local on_attach = function(_, bufnr)
   end, { desc = 'Format current buffer with LSP' })
 end
 
--- document existing key chains
-require('which-key').register {
-  ['<leader>c'] = { name = '[C]ode', _ = 'which_key_ignore' },
-  ['<leader>d'] = { name = '[D]ocument', _ = 'which_key_ignore' },
-  ['<leader>g'] = { name = '[G]it', _ = 'which_key_ignore' },
-  ['<leader>h'] = { name = 'Git [H]unk', _ = 'which_key_ignore' },
-  ['<leader>r'] = { name = '[R]ename', _ = 'which_key_ignore' },
-  ['<leader>s'] = { name = '[S]earch', _ = 'which_key_ignore' },
-  ['<leader>t'] = { name = '[T]oggle', _ = 'which_key_ignore' },
-  ['<leader>w'] = { name = '[W]orkspace', _ = 'which_key_ignore' },
-}
--- register which-key VISUAL mode
--- required for visual <leader>hs (hunk stage) to work
-require('which-key').register({
-  ['<leader>'] = { name = 'VISUAL <leader>' },
-  ['<leader>h'] = { 'Git [H]unk' },
+-- document existing key chains using the new which-key spec
+local wk = require('which-key')
+wk.add({
+  { '<leader>c', group = '[C]ode' },
+  { '<leader>c_', hidden = true },
+  { '<leader>d', group = '[D]ocument' },
+  { '<leader>d_', hidden = true },
+  { '<leader>g', group = '[G]it' },
+  { '<leader>g_', hidden = true },
+  { '<leader>h', group = 'Git [H]unk' },
+  { '<leader>h_', hidden = true },
+  { '<leader>r', group = '[R]ename' },
+  { '<leader>r_', hidden = true },
+  { '<leader>s', group = '[S]earch' },
+  { '<leader>s_', hidden = true },
+  { '<leader>t', group = '[T]oggle' },
+  { '<leader>t_', hidden = true },
+  { '<leader>w', group = '[W]orkspace' },
+  { '<leader>w_', hidden = true },
+}, { mode = 'n' })
+wk.add({
+  { '<leader>', group = 'VISUAL <leader>' },
 }, { mode = 'v' })
 
 -- mason-lspconfig requires that these setup functions are called in this order
@@ -99,7 +105,7 @@ local servers = {
   },
   pyright = {},
   quick_lint_js = {},
-  tsserver = {},
+  ts_ls = {},
   sqlls = {},
   tailwindcss = {},
 }
@@ -118,25 +124,32 @@ mason_lspconfig.setup {
   ensure_installed = vim.tbl_keys(servers),
 }
 
-mason_lspconfig.setup_handlers {
-  function(server_name)
-    require('lspconfig')[server_name].setup {
-      capabilities = capabilities,
-      on_attach = on_attach,
-      settings = servers[server_name],
-      filetypes = (servers[server_name] or {}).filetypes,
-    }
-  end,
-}
+local lsp_config = vim.lsp.config
+
+vim.lsp.config('*', {
+  capabilities = capabilities,
+  on_attach = on_attach,
+})
+
+for server_name, custom_settings in pairs(servers) do
+  local server_opts = vim.tbl_deep_extend('force', {
+    capabilities = capabilities,
+    on_attach = on_attach,
+  }, vim.deepcopy(custom_settings or {}))
+
+  vim.lsp.config(server_name, server_opts)
+end
+
+vim.lsp.enable(vim.tbl_keys(servers))
 
 -- Linters
 -- https://github.com/VonHeikemen/nvim-starter/blob/xx-mason/init.lua
 -- local lspconfig = require('lspconfig')
 -- local lsp_capabilities = require('cmp_nvim_lsp').default_capabilities()
--- 
+--
 -- require('mason-lspconfig').setup({
 --   ensure_installed = {
---     'tsserver',
+--     'ts_ls',
 --     'eslint',
 --     'html',
 --     'cssls'
@@ -147,8 +160,8 @@ mason_lspconfig.setup_handlers {
 --         capabilities = lsp_capabilities,
 --       })
 --     end,
---     ['tsserver'] = function()
---       lspconfig.tsserver.setup({
+--     ['ts_ls'] = function()
+--       lspconfig.ts_ls.setup({
 --         capabilities = lsp_capabilities,
 --         settings = {
 --           completions = {
@@ -159,6 +172,6 @@ mason_lspconfig.setup_handlers {
 --     end
 --   }
 -- })
--- 
+--
 
 -- vim: ts=2 sts=2 sw=2 et

@@ -175,6 +175,9 @@ require('lazy').setup({
     opts = {},
   },
 
+  -- Icon provider used by which-key
+  { 'echasnovski/mini.icons', opts = {} },
+
   -- "gc" to comment visual regions/lines
   { 'numToStr/Comment.nvim', opts = {} },
 
@@ -223,7 +226,6 @@ require('lazy').setup({
   -- https://github.com/olimorris/codecompanion.nvim
   {
     "olimorris/codecompanion.nvim",
-    config = true,
     dependencies = {
       "nvim-lua/plenary.nvim",
       "nvim-treesitter/nvim-treesitter",
