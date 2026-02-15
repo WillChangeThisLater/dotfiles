@@ -1,9 +1,9 @@
 ---
-name: meta
+name: introspection
 description: Inspect the pi harness itself (~/repos/pi-mono) to answer questions about commands, settings, or internals.
 ---
 
-# Pi Meta-Inspection Skill
+# Pi Introspection Skill
 
 Use this skill whenever you or the user needs to understand how the pi harness works internally (commands like `/session`, startup behavior, skill loading, etc.). It guides you to examine the local pi source tree (`~/repos/pi-mono`, forked from `badlogic/pi-mono`) and relevant documentation.
 
@@ -43,10 +43,15 @@ Use this skill whenever you or the user needs to understand how the pi harness w
 5. **Answer Follow-up Questions**
    - If something is unclear, keep searching the repo (e.g., `rg "new Session"` or `rg "BrowserTools"`).
 
+## Session History
+- Pi stores prior agent sessions under `~/.pi/agent/sessions/` (JSON files per session). Use `ls` plus `read` to inspect these when a user references earlier conversations or wants a synthesized summary of past work.
+- Keep scope in mind: only surface cross-session details when the user explicitly asks for them, and summarize rather than dumping entire logs.
+- Combine history checks with repository inspection when you need to recall decisions, commands run, or explanations given previously.
+
 ## Tips
-- If a user question feels unrelated to the current repo (“What does `/session` do?” during a coding task), pause and consider whether it’s a meta request before proceeding.
+- If a user question feels unrelated to the current repo (“What does `/session` do?” during a coding task), pause and consider whether it’s an introspection request before proceeding.
 - Combine this skill with `planning-with-files` if your investigation spans multiple files or needs documentation for future reference.
-- When exploring the same topic repeatedly, consider creating notes under `/home/paul/.pi/agent/skills/meta-notes/` (or similar) so future you can follow faster.
+- When exploring the same topic repeatedly, consider creating notes under `/home/paul/.pi/agent/skills/introspection-notes/` (or similar) so future you can follow faster.
 - If the code points to upstream `badlogic/pi-mono`, note the git remote or commit references so the user can sync.
 
 ## Learned Lessons
