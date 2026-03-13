@@ -1,0 +1,9 @@
+KEYMAP:UPARROW:UP_TWO		# Move display up two lines
+KEYMAP:DNARROW:DOWN_TWO		# Move display down two lines
+KEYMAP:0x20:DOWN_HALF		# Move display down half a page
+KEYMAP:LTARROW:PREV_LINK	# Move to the previous link or page
+KEYMAP:RTARROW:NEXT_LINK	# Move to the next link or page
+KEYMAP:h:HISTORY		# Show the history list
+KEYMAP:0x08:PREV_DOC		# Return to the previous document in history stack
+KEYMAP:0x7F:PREV_DOC		# Return to the previous document in history stack
+KEYMAP:J:JUMP
