@@ -471,3 +471,6 @@ alias recent_screenshot='ls -t ~/Pictures/Screenshots | head -n 1 | xargs -I {} 
 # bun
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
+
+# lynx
+alias lynx="lynx -cfg lynx.cfg -lss custom.lss --cookies=off"
