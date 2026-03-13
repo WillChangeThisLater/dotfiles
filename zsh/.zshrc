@@ -464,3 +464,10 @@ export NVM_DIR="$HOME/.nvm"
 alias fp="files-to-prompt"
 
 alias recent_screenshot='ls -t ~/Pictures/Screenshots | head -n 1 | xargs -I {} echo ~/Pictures/Screenshots/{}'
+
+# bun completions
+[ -s "/home/paul/.bun/_bun" ] && source "/home/paul/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"

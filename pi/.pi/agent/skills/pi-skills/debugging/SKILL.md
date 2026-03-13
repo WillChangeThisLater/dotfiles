@@ -78,19 +78,20 @@ Steps:
 4. When done, exit the shell, terminate ngrok, scrub any temp scripts/credentials, and document that the session was torn down.
 
 ### 5. General Troubleshooting Template
+- **Simplify, Simplify, Simplify**: When you encounter a complicated bug, some up with the simplest code you can to reproduce it. This greatly narrows the "bug area" you need to search over and helps focus your thinking
 - **Describe the state**: “After deploying, /health returns 500 with XYZ.”
 - **Capture evidence**: logs (`tail -n 200 log.txt`), screenshots, mitmproxy exports, rpdb session notes.
 - **Form hypotheses**: jot them in `findings.md` if you’re using planning-with-files.
 - **Test systematically**: change one variable at a time, record results.
 - **Summarize**: include repro steps, root cause, and fix in your final write-up.
 
-### 6. Escalate to the User When Stuck
-If you’ve been spinning for a while, pause and brief the user rather than guessing endlessly. Provide:
-- Repro steps and current status (include commands, environments, branches).
-- Techniques already tried (e.g., mitmproxy captures, rpdb breakpoints, convo summaries).
-- Hypotheses tested and their outcomes.
-- Open questions or blockers where their domain knowledge may help.
-This makes it easier for the human to unblock you or suggest a new angle.
+### 6. Escalate to the User When Stuck (Debugging Mindset)
+When you recognize you need human help, “think like a debugger” and be explicit:
+1. **Describe the problem** – what you expected vs. what happened, with concrete repro steps and command output references.
+2. **List the fixes attempted** – enumerate every experiment/tool you’ve already tried (mitmproxy logs, rpdb breakpoints, convo summaries, config changes, etc.), including their results.
+3. **Offer to step through together** – invite the human to walk through the workflow in fine detail, e.g., “Happy to rerun `npm run dev` step-by-step and pause after each command so you can confirm the state.”
+
+This structure makes it easy for a human to audit each step, find divergence points, and teach new techniques. Always wait for their acknowledgment before resuming automation so the back-and-forth stays in lockstep.
 
 ## Tips
 - Whenever you introduce a tool (mitmproxy, rpdb, convo, ngrok reverse shells), mention it explicitly to the user so they understand the extra instrumentation.

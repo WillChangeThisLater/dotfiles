@@ -16,14 +16,24 @@ cd {baseDir}/browser-tools
 npm install
 ```
 
-## Start Chrome
+## Start Chrome (once per tmux session)
 
 ```bash
 {baseDir}/browser-start.js              # Fresh profile
 {baseDir}/browser-start.js --profile    # Copy user's profile (cookies, logins)
+{baseDir}/browser-start.js --binary /path/to/chrome  # Override auto-detected binary
 ```
 
-Launch Chrome with remote debugging on `:9222`. Use `--profile` to preserve user's authentication state.
+- The launcher now autodetects Chrome/Chromium paths on macOS, Linux, and Windows. Override detection with `BROWSER_TOOLS_CHROME`, `CHROME_PATH`, or `--binary`.
+- If Chrome is already listening on `:9222`, the script exits early so you can keep a persistent session alive across commands.
+- Always run this in the tmux window where you want Chrome logs so you can revisit the session later.
+
+### Persistent sessions
+
+1. Create/attach a tmux window just for browser tooling (e.g., `tmux new-window -n browser`).
+2. Run `browser-start.js` once. Leave it running for the duration of the task.
+3. Reuse the same Chrome instance with `browser-nav.js`, `browser-eval.js`, screenshots, etc. Tabs stay open between commands, so you don't need to renavigate after every step.
+4. When you're done, close Chrome (Ctrl+C the process or quit from the GUI) so the remote debugging port is freed.
 
 ## Navigate
 
@@ -32,16 +42,48 @@ Launch Chrome with remote debugging on `:9222`. Use `--profile` to preserve user
 {baseDir}/browser-nav.js https://example.com --new
 ```
 
-Navigate to URLs. Use `--new` flag to open in a new tab instead of reusing current tab.
+Navigate to URLs. Use `--new` to open in a new tab instead of reusing the current one.
 
 ## Evaluate JavaScript
+
+### Quick expressions
 
 ```bash
 {baseDir}/browser-eval.js 'document.title'
 {baseDir}/browser-eval.js 'document.querySelectorAll("a").length'
 ```
 
-Execute JavaScript in the active tab. Code runs in async context. Use this to extract data, inspect page state, or perform DOM operations programmatically.
+Inline code is treated as an expression. Wrap multi-step logic in an IIFE if you need statements:
+
+```bash
+{baseDir}/browser-eval.js '(function () { /* ... */ })()'
+```
+
+### Multi-line scripts without painful quoting
+
+Use `--file` or `--stdin` to execute longer scripts directly from disk:
+
+```bash
+# Create a script with write/read tools, then:
+{baseDir}/browser-eval.js --file /tmp/browser-script.js
+
+# Or pipe via stdin (helpful for generated code):
+{baseDir}/browser-eval.js --stdin < /tmp/browser-script.js
+```
+
+When you supply `--file/--stdin`, the script runs verbatim inside an async function—no implicit `return (...)` wrapper—so you can write normal statements and `return` explicitly if you need output.
+
+### Terminal command helper
+
+When a page exposes `window.webTerminal.send` (like our minimal web terminal client), you can run commands without wrestling with inline JavaScript:
+
+```bash
+cd {baseDir}/browser-tools
+./scripts/browser-term-send.js "ls -la"
+./scripts/browser-term-send.js --tail 40 --wait 800 "npm test"
+```
+
+The helper automatically appends `\r`, sends the string through `window.webTerminal.send`, waits a short delay, and prints the latest xterm output plus the connection status pill. Use `--no-tail` if you only need to fire-and-forget, or tweak `--tail` / `--wait` to capture longer-running commands.
 
 ## Screenshot
 
@@ -49,7 +91,7 @@ Execute JavaScript in the active tab. Code runs in async context. Use this to ex
 {baseDir}/browser-screenshot.js
 ```
 
-Capture current viewport and return temporary file path. Use this to visually inspect page state or verify UI changes.
+Capture the current viewport and return a temporary file path. Use this to verify UI changes visually.
 
 ## Pick Elements
 
@@ -84,7 +126,7 @@ Navigate to a URL and extract readable content as markdown. Uses Mozilla Readabi
 
 - Testing frontend code in a real browser
 - Interacting with pages that require JavaScript
-- When user needs to visually see or interact with a page
+- When the user needs to visually see or interact with a page
 - Debugging authentication or session issues
 - Scraping dynamic content that requires JS execution
 
@@ -110,7 +152,7 @@ Array.from(document.querySelectorAll('button, input, [role="button"]')).map(e =>
 
 ### Complex Scripts in Single Calls
 
-Wrap everything in an IIFE to run multi-statement code:
+Wrap everything in an IIFE to run multi-statement code (or place it in a file and call `browser-eval.js --file script.js`):
 
 ```javascript
 (function() {
@@ -198,3 +240,8 @@ Then target specific elements based on what you find.
 ## Learned Lessons
 
 Any agent who uses this skill and uncovers new workflows, edge cases, or best practices should document them here for future reference.
+
+### 2026-02-12 – Persistent browser + multi-line eval quality-of-life
+- `browser-start.js` auto-detects Chrome on macOS/Linux/Windows and accepts `--binary`/`BROWSER_TOOLS_CHROME`, so Linux hosts no longer need manual `google-chrome ...` launches.
+- Start Chrome once per tmux session and reuse tabs to avoid renavigation when testing local apps.
+- Use `browser-eval.js --file/--stdin` to run long scripts without battling shell quoting; inline code still works for quick expressions.

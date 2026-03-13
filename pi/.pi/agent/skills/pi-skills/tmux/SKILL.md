@@ -93,6 +93,7 @@ Use `tmux pipe-pane -t taskname:1.0` with no command to stop piping.
 - **Detached but want to rejoin**: `tmux a -t taskname`.
 - **Copy mode**: `Ctrl-b` `[` to scroll and copy text; exit with `q`.
 - **Keyboard shortcuts not working**: ensure `$TERM` is compatible (e.g., `screen-256color`).
+- **Need sudo privileges**: If a command requires `sudo` and the agent cannot provide the password, the agent should ask the user for assistance to enter the sudo password. The agent should not attempt to guess or provide sudo credentials.
 
 Always clean up sessions when the task is complete unless the user asks to keep them running.
 
@@ -104,3 +105,6 @@ Any agent who uses this skill and discovers a new workflow, edge case, or tip sh
 - **Interactive programs**: when driving full-screen apps (e.g., mitmproxy) inside a pane, `tmux send-keys -t session:window.pane q` / `y` pairs are useful for quitting cleanly. Control sequences (such as `C-c` to interrupt `sleep 1000`) can be sent the same way.
 - **Pane inspection**: use `tmux capture-pane -t target -p` for a quick textual “peek” before deciding whether to save a pane. This helps verify commands succeeded before capturing to `/tmp`.
 - **Exports from TUI tools**: mitmproxy’s built-in exporter (`e` → select part → `b`) piping into an editor makes it easy to write captured responses to files (e.g., `/tmp/response`). Document file paths you create so users know where outputs live.
+
+### 2026-02-06 – Long-running logs masking command output
+- When tailing logs (e.g., `docker logs -f`) inside a pane, stop the stream with `Ctrl-c` before issuing new commands; otherwise, the ongoing log output can bury the response and make it seem like the command didn’t execute. Verify the prompt reappears before repeating commands.

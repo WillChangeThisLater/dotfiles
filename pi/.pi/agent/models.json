@@ -11,6 +11,12 @@
           "name": "Qwen2.5-7B-Instruct",
           "contextWindow": 128000,
           "maxTokens": 128000
+        },
+        {
+          "id": "Qwen3-Coder-30B-A3B-Instruct-UD-IQ3_XXS.gguf",
+          "name": "Qwen3 Coder 30B (Local IQ3)",
+          "contextWindow": 128000,
+          "maxTokens": 65536
         }
       ]
     }
