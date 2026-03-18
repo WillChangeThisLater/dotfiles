@@ -1,6 +1,6 @@
 -- [[ Configure LSP ]]
 --  This function gets run when an LSP connects to a particular buffer.
-local on_attach = function(_, bufnr)
+local on_attach = function(client, bufnr)
   -- NOTE: Remember that lua is a real programming language, and as such it is possible
   -- to define small helper and utility functions so you don't have to repeat yourself
   -- many times.
@@ -15,12 +15,29 @@ local on_attach = function(_, bufnr)
     vim.keymap.set('n', keys, func, { buffer = bufnr, desc = desc })
   end
 
+  local function has_capability(cap)
+    local clients = vim.lsp.get_clients({ bufnr = bufnr })
+    for _, active_client in ipairs(clients) do
+      if active_client.server_capabilities[cap] then
+        return true
+      end
+    end
+    return false
+  end
+
   nmap('<leader>rn', vim.lsp.buf.rename, '[R]e[n]ame')
   nmap('<leader>ca', function()
     vim.lsp.buf.code_action { context = { only = { 'quickfix', 'refactor', 'source' } } }
   end, '[C]ode [A]ction')
 
   nmap('gd', require('telescope.builtin').lsp_definitions, '[G]oto [D]efinition')
+  nmap('gD', function()
+    if has_capability('declarationProvider') then
+      vim.lsp.buf.declaration()
+    else
+      vim.lsp.buf.definition()
+    end
+  end, '[G]oto [D]eclaration')
   nmap('gr', require('telescope.builtin').lsp_references, '[G]oto [R]eferences')
   nmap('gI', require('telescope.builtin').lsp_implementations, '[G]oto [I]mplementation')
   nmap('<leader>D', require('telescope.builtin').lsp_type_definitions, 'Type [D]efinition')
@@ -32,7 +49,6 @@ local on_attach = function(_, bufnr)
   nmap('<C-k>', vim.lsp.buf.signature_help, 'Signature Documentation')
 
   -- Lesser used LSP functionality
-  nmap('gD', vim.lsp.buf.declaration, '[G]oto [D]eclaration')
   nmap('<leader>wa', vim.lsp.buf.add_workspace_folder, '[W]orkspace [A]dd Folder')
   nmap('<leader>wr', vim.lsp.buf.remove_workspace_folder, '[W]orkspace [R]emove Folder')
   nmap('<leader>wl', function()
@@ -43,6 +59,12 @@ local on_attach = function(_, bufnr)
   vim.api.nvim_buf_create_user_command(bufnr, 'Format', function(_)
     vim.lsp.buf.format()
   end, { desc = 'Format current buffer with LSP' })
+
+  -- Diagnostic navigation (using [d and ]d to avoid conflict with gd/gD)
+  nmap('[d', vim.diagnostic.goto_prev, 'Prev Diagnostic')
+  nmap(']d', vim.diagnostic.goto_next, 'Next Diagnostic')
+  nmap('<leader>de', vim.diagnostic.open_float, 'Hover Diagnostics')
+  nmap('<leader>dl', vim.diagnostic.setloclist, 'Open Location List')
 end
 
 -- document existing key chains using the new which-key spec
@@ -105,7 +127,29 @@ local servers = {
   },
   pyright = {},
   quick_lint_js = {},
-  ts_ls = {},
+  ts_ls = {
+    settings = {
+      completions = {
+        completeFunctionCalls = true,
+      },
+      typescript = {
+        preferences = {
+          preferGoToSourceDefinition = true,
+        },
+        implementationsCodeLens = {
+          enable = true,
+        },
+      },
+      javascript = {
+        preferences = {
+          preferGoToSourceDefinition = true,
+        },
+        implementationsCodeLens = {
+          enable = true,
+        },
+      },
+    },
+  },
   sqlls = {},
   tailwindcss = {},
 }
@@ -141,6 +185,23 @@ for server_name, custom_settings in pairs(servers) do
 end
 
 vim.lsp.enable(vim.tbl_keys(servers))
+
+-- Enable inline diagnostics (virtual text)
+vim.diagnostic.config({
+  virtual_text = true,      -- Show errors inline
+  underline = true,         -- Underline problematic code
+  update_in_insert = false, -- Don't update in insert mode (less distracting)
+  severity_sort = true,     -- Sort by severity (errors first)
+  signs = true,             -- Show signs in the signcolumn (your 'E' markers)
+  float = {
+    focusable = true,
+    style = 'minimal',
+    border = 'rounded',
+    source = 'always',
+    header = '',
+    prefix = '',
+  },
+})
 
 -- Linters
 -- https://github.com/VonHeikemen/nvim-starter/blob/xx-mason/init.lua
