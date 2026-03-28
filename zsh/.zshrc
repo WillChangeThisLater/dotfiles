@@ -161,8 +161,8 @@ alias dockershellsh="docker run --rm -i -t --entrypoint=/bin/sh" # https://blog.
 
 # autocomplete stuff for k8s
 # See https://kubernetes.io/docs/tasks/tools/included/optional-kubectl-configs-zsh/
-complete -F __start_kubectl k
-source <(kubectl completion zsh)
+#complete -F __start_kubectl k
+#source <(kubectl completion zsh)
 
 # autocomplete stuff for aws cli
 # See: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-completion.html
@@ -436,7 +436,7 @@ alias s='source .venv/bin/activate'
 # tellr: tell | llm "cleanup"
 #alias tellr='tell | llm "this is a text to speech transcript from a user. clean up this transcript. remove fillers such as like and um. fix grammar when needed. also respond to user directives. if a user tells you to forget something, forget it. if a user tells you to reformat a specific thought, reformat it, etc. do NOT provide any comments on what changes you make - edit the transcript as if it were in the users words"'
 #alias codex='codex --dangerously-bypass-approvals-and-sandbox'
-alias firefox="/Applications/Firefox.app/Contents/MacOS/firefox"
+#alias firefox="/Applications/Firefox.app/Contents/MacOS/firefox"
 
 # Start ssh-agent if not already running
 if ! pgrep -u "$USER" ssh-agent > /dev/null; then
@@ -471,3 +471,10 @@ alias recent_screenshot='ls -t ~/Pictures/Screenshots | head -n 1 | xargs -I {} 
 # bun
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
+
+# lynx
+alias lynx="lynx -cfg ~/.config/lynx/lynx.cfg --cookies=off" # can add '-lss ~/.config/lynx/custom.lss' but not sure i like custom styling
+export TERM="kitty"
+
+export PATH=/usr/local/cuda-13.0/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH

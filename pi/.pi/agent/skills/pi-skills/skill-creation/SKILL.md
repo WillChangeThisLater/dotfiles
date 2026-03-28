@@ -53,6 +53,16 @@ Do **not** reach for this skill at the beginning of a task or before you have re
    - Summarize the new skill’s contents and path.  
    - Highlight any follow-up actions (e.g., install scripts, environment variables).
 
+## Project vs. Global Skills
+- **Global skills** (`~/.pi/agent/skills/**`) capture workflows that apply across repos or environments. Choose this scope only if future agents can reuse the instructions anywhere.
+- **Project-scoped skills** belong under that repo’s `.pi/skills/<skill-name>/`. Use them when the workflow depends on repo-specific paths, services, or conventions (e.g., `chatty`’s tmux flow).
+- When creating a project skill:
+  1. Confirm the repository already loads `.pi/skills/` (the default `DefaultResourceLoader` does).
+  2. Place helper scripts next to the skill (`<repo>/.pi/skills/<skill-name>/scripts/`) and add a README explaining how to discover them.
+  3. Link the new skill from the repo’s `AGENTS.md`, `SKILL.md`, or other context files so agents know it exists.
+  4. Mention the project skill in NOTES/PROGRESS files when you rely on it, so hand-offs are obvious.
+- When in doubt, start project-local; later, if the pattern proves reusable, you can promote it to a global skill via the same approval process.
+
 ## Guardrails
 - Never create a skill without user consent. If the user declines or is unsure, defer and continue working without formalizing it.
 - Keep skills concise and actionable—focus on steps agents can reliably follow.

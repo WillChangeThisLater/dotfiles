@@ -1,110 +1,154 @@
 ---
 name: tmux
-description: Run all work inside dedicated tmux sessions, manage windows/panes, and capture pane output.
+description: How to communicate with tmux panes
 ---
 
-# tmux Skill
+# Background
+I will often want you to interact with tmux using the tmux cli.
 
-Use tmux to isolate tasks inside dedicated terminal sessions. Always begin work by creating (or attaching to) a task-specific tmux session, then perform every command from within that session. This keeps logs organized, makes it easy to resume work, and enables pane captures when the user asks for "screenshots."
+  * "i am ssh'd into the pinephone at pane 0:1.0. use this pane for interacting with the pinephone"
+  * "send a hello message to the pi agent running on ai:agents.2.
 
-## Requirements
+This skill explains what I mean when I say things like this.
 
-- `tmux` available in `$PATH` (check with `tmux -V`).
-- Basic familiarity with terminal navigation (the skill documents the key bindings and command equivalents below).
+# Init ritual (required)
+When the user assigns a tmux target, you must lock a single active target and echo it back before taking actions.
 
-## Quick Start Workflow
+Use this exact target format everywhere:
 
-1. **Create a new session** (unique, descriptive name):
-   ```bash
-   tmux new -s taskname
-   ```
-   - Use lowercase, hyphenated names (e.g., `tmux new -s hn-audit`).
-2. **Detach/reattach as needed**:
-   ```bash
-   tmux detach            # Ctrl-b d
-   tmux attach -t taskname
-   ```
-3. **Add windows or panes** for subtasks (see sections below).
-4. **Capture panes** with `tmux capture-pane` + `tmux save-buffer /tmp/<file>.txt` whenever a transcript/screenshot is requested.
-5. **Clean up** completed sessions: `tmux kill-session -t taskname`.
+`session:window.pane`
 
-## Session Management
+Example:
 
-| Action | Command |
-| --- | --- |
-| List sessions | `tmux ls` |
-| Create + attach | `tmux new -s taskname` |
-| Attach existing | `tmux attach -t taskname` |
-| Detach | `Ctrl-b` `d` |
-| Rename session | `tmux rename-session -t old name` |
-| Kill session | `tmux kill-session -t taskname` |
+`skills:tmux.2`
 
-Tips:
-- When running commands from outside tmux (e.g., via scripts), target sessions explicitly: `tmux send-keys -t taskname "command" Enter`.
-- Store session names in environment variables for automation: `SESSION=taskname`.
+Required init steps:
 
-## Windows and Panes
+1. **Lock active target**
+   - Record and use one active target exactly as provided by the user.
+   - Do not switch targets unless the user explicitly reassigns it.
+2. **Echo target to yourself and user**
+   - State: “Active tmux target: `<session:window.pane>`”.
+3. **Capture starting state**
+   - Run:
+     ```bash
+     tmux capture-pane -p -t <session:window.pane>
+     ```
+   - Summarize what is currently running / visible in that pane.
+4. **Declare interaction scope**
+   - State when you will use this target:
+     - Any command intended for that remote box/device/agent.
+     - Any follow-up reads (`capture-pane`) for those commands.
+5. **Detect active interface and load controls**
+   - Use the starting-state capture to identify the active interface in the target pane (e.g. `pi-agent`, `shell`, or another TUI).
+   - First read `controls/README.md` for global control conventions.
+   - If a matching controls file exists under `controls/<interface>/CONTROLS.md`, read it before complex interactions.
+   - Briefly state which controls file you are using.
+   - If no controls file exists, say so and proceed with cautious single-step send/capture loops.
 
-### Windows
-- New window: `Ctrl-b` `c` or `tmux new-window -t taskname -n build`.
-- List windows: `Ctrl-b` `w`.
-- Rename window: `Ctrl-b` `,` or `tmux rename-window -t taskname:1 logs`.
-- Switch windows: `Ctrl-b` `<number>` / `Ctrl-b` `n` / `Ctrl-b` `p`.
+Sticky-target rule:
+- After init, all tmux interactions for that assigned system must use the active target.
+- If a command would use a different target, stop and ask for confirmation first.
 
-### Panes
-- Split horizontal: `Ctrl-b` `"` or `tmux split-window -v`.
-- Split vertical: `Ctrl-b` `%` or `tmux split-window -h`.
-- Navigate panes: `Ctrl-b` arrow keys.
-- Resize: `Ctrl-b` `Ctrl` + arrow keys or `tmux resize-pane -L/-R/-U/-D 5`.
-- Close pane: `Ctrl-d` in the pane or `tmux kill-pane -t taskname:1.1`.
+# Interacting with panes
+Pane interaction is a fundamental part of tmux. There are two primitives `send-keys` and `capture-pane`. `send-keys` gives you the "write" side of the puzzle, `capture-pane` gives you the "read". Together you can do basically everything
 
-Organize panes by task (e.g., editor, tests, logs). Document pane targets as `session:window.pane` (e.g., `taskname:1.0`).
 
-## Capturing Pane Output ("Screenshots")
-
-Use tmux's buffer utilities to grab exact pane contents:
+Example: interacting with a shell
 
 ```bash
-target="taskname:1.0"
-tmux capture-pane -t "$target" -J -S -2000  # -J joins wrapped lines, -S sets scrollback start
-capture_file="/tmp/${SESSION:-taskname}-pane1.txt"
-tmux save-buffer "$capture_file"
-tmux delete-buffer
+# assume pane 0 in window 'tmux' in session 'skills' is running /bin/bash
+# i have asked you to tell me what currently shows in the pane
+# after you've done this, i've asked you to tell me what files exist in the current directory
+# using 'ls'
+
+# capture content of the pane 
+tmux capture-pane -p -t skills:tmux.0
+# sometimes you need to see more history
+tmux capture-pane -p -t skills:tmux.0 -S -500
+
+# run 'ls' in the pane. this is done by literally sending "ls\n" to the pane
+tmux send-keys -t skills:tmux.0 "ls" Enter
+# see the result
+tmux capture-pane -p -t skills:tmux.0
 ```
 
-Guidelines:
-- Choose filenames under `/tmp` or the project workspace (reference them in your final response).
-- Use `-S -2000` (or another negative offset) to include recent scrollback.
-- For raw bytes (e.g., binary output), add `-e` to `capture-pane`.
-- Mention the capture path when summarizing work.
+Example: interacting with pi agent
 
-## Logging / Streaming Output
-
-For long-running commands, pipe pane output to a file:
 ```bash
-tmux pipe-pane -t taskname:1.0 -o 'cat >> /tmp/taskname.log'
+# i have asked you to interrupt the pi agent running at agents:pi.2. i've asked you to do this so you can
+# introduce yourself. i've asked you to use the name 'bob'. i aksed you to both (a) ask for the agent's name
+# and land on a communication protocol you can use for inter-agent comms
+
+# interrupt the agent because i told you to
+# wait a second to make sure the esc goes through
+tmux send-keys -t agents:pi.2 Escape
+sleep 1
+
+# clear any old prompt by entering backspace 10k times
+tmux send-keys -t agents:pi.2 -N 10000 BSpace
+
+# give the agent your message
+# need 'Enter' at the end to actually send the message
+tmux send-keys -t agents:pi.2 "hi. i am 'bob', a pi agent running on paul's system. i'd like you to tell me your name. then, let's figure out ..." Enter
+
+# wait a little, then check response
+# this is tricky, and <5> is subjective. if you don't see any visual change in the agent state
+# one of at least two things might have happened
+#
+#   1. the agent is still processing the response and has not output anything. in this case nothing is wrong - the agent is just taking a long time
+#   2. the agent is down and will never respond. this is more serious since it mean's the agent you were talking to is effectively dead
+#
+# there is no perfect answer for how to handle this. my advice is to poll the agent a few times (say, for up to 30 seconds) to see if state changes.
+# if not, interrupt it and ask it explicitly for a status update
+sleep 5
+tmux capture-pane -p -t agents:pi.2
 ```
-Use `tmux pipe-pane -t taskname:1.0` with no command to stop piping.
 
-## Troubleshooting & Cleanup
+What complicates this is that each interactive command you run will have its own CLI interface. For instance, bash will respond to
+things like signals (ctrl+c, ctrl+z, etc) like you'd expect, but other programs might not.
 
-- **Session already exists**: attach with `tmux attach -t taskname` instead of creating a new one.
-- **Stale sessions**: `tmux ls` then `tmux kill-session -t <name>`.
-- **Detached but want to rejoin**: `tmux a -t taskname`.
-- **Copy mode**: `Ctrl-b` `[` to scroll and copy text; exit with `q`.
-- **Keyboard shortcuts not working**: ensure `$TERM` is compatible (e.g., `screen-256color`).
-- **Need sudo privileges**: If a command requires `sudo` and the agent cannot provide the password, the agent should ask the user for assistance to enter the sudo password. The agent should not attempt to guess or provide sudo credentials.
+The `bash` and `pi-agent` interfaces are relatively simple. `bash` is as you'd expected (newline delimited, use 'enter' to send commands).
+`pi-agent` is a bit more complex. There are a few features in `pi-agent` I might ask you to play with that it's worth being aware of:
 
-Always clean up sessions when the task is complete unless the user asks to keep them running.
+  * commands: `pi-agent` supports a bunch of custom commands. you can see a few pop up when you type just '/' (no enter)
 
-## Learned Lessons
+    ```bash
+    tmux send-keys -t agents:pi.2 "/"
+    tmux capture-pane -p -t agents:pi.2 # a few commands should pop up
+    tmux send-keys -t agents:pi.2 -N 2 Down # navigate to the command you want using arrow keys, which in this case is down 2 from the top
+    ```
 
-Any agent who uses this skill and discovers a new workflow, edge case, or tip should document it here for future reference.
+    you can run a command using '/<command>' with Enter. for instance, to run the settings command:
 
-### 2026-02-04 – Mitmproxy + curl workflow
-- **Interactive programs**: when driving full-screen apps (e.g., mitmproxy) inside a pane, `tmux send-keys -t session:window.pane q` / `y` pairs are useful for quitting cleanly. Control sequences (such as `C-c` to interrupt `sleep 1000`) can be sent the same way.
-- **Pane inspection**: use `tmux capture-pane -t target -p` for a quick textual “peek” before deciding whether to save a pane. This helps verify commands succeeded before capturing to `/tmp`.
-- **Exports from TUI tools**: mitmproxy’s built-in exporter (`e` → select part → `b`) piping into an editor makes it easy to write captured responses to files (e.g., `/tmp/response`). Document file paths you create so users know where outputs live.
+    ```bash
+    tmux send-keys -t agents:pi.2 "/settings" Enter
+    tmux capture-pane -p -t agents:pi.2 # setting options should pop up
+    ```
 
-### 2026-02-06 – Long-running logs masking command output
-- When tailing logs (e.g., `docker logs -f`) inside a pane, stop the stream with `Ctrl-c` before issuing new commands; otherwise, the ongoing log output can bury the response and make it seem like the command didn’t execute. Verify the prompt reappears before repeating commands.
+  * the menus `pi-agent` uses are interesting. you can actually search the menu by just typing the item
+    you are looking for. for instance, this shows you all commands with 'auto' in them:
+
+    ```bash
+    # assume you are already in /settings
+    # do NOT use enter here
+    tmux send-keys -t agents:pi.2 "resize"
+    tmux capture-pane -p -t agents:pi.2 # options should pop up
+    ```
+
+  * `Escape` will often get you from a sub menu to the home menu 
+
+  * pi agent has a bunch of interesting options that i may ask you to work with (for instance, /tree and /resume). these have more complex menus
+    you should let me know this is your first time using these commands and let me know that, even if you experiment around, you may need help
+
+## Controls
+Read `controls/README.md` first for global control conventions and maintenance expectations.
+
+Some interfaces have custom control documentation that will help you interact with them. `pi-agent`, for instance,
+has controls at `controls/pi-agent/CONTROLS.md`, and generic shell interactions are covered in `controls/shell/CONTROLS.md`.
+
+These control interfaces are hard won. Usually I generate these by spinning up an agent in one pane and the CLI I want to generate controls for in
+the other. I then prompt the agent do use tmux to "do things" in this CLI. I slowly guide the agent so it figures out how the CLI works. At some point,
+the agent has generated enough internal knowledge that it can write documentation for other agents about how to use the CLI. While this documentation is
+written by agents for agents, it should follow the general style and conventions of SKILL.md for consistency
+

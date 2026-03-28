@@ -1,24 +1,41 @@
 {
   "providers": {
     "llama-cpp": {
-      "baseUrl": "http://127.0.0.1:8080/v1",
+      "baseUrl": "http://localhost:8080/v1",
       "api": "openai-completions",
       "apiKey": "llama",
       "compat": { "supportsUsageInStreaming": false },
       "models": [
         {
-          "id": "Qwen/Qwen2.5-7B-Instruct-GGUF",
-          "name": "Qwen2.5-7B-Instruct",
+          "id": "Qwen3.5-9B-Q8_0.gguf",
+          "name": "Qwen3.5 9B",
+          "input": ["text", "image"],
           "contextWindow": 128000,
           "maxTokens": 128000
-        },
-        {
-          "id": "Qwen3-Coder-30B-A3B-Instruct-UD-IQ3_XXS.gguf",
-          "name": "Qwen3 Coder 30B (Local IQ3)",
-          "contextWindow": 128000,
-          "maxTokens": 65536
         }
       ]
+    },
+    "ipv6-llama-cpp": {
+        "baseUrl": "http://[::1]:8080/v1",
+        "api": "openai-completions",
+        "apiKey": "llama",
+        "compat": { "supportsUsageInStreaming": false },
+        "models": [
+          {
+            "id": "Qwen3.5-35B-A3B-Q8_0.gguf",
+            "name": "Qwen3.5 35B",
+            "input": ["text", "image"],
+            "contextWindow": 128000,
+            "maxTokens": 128000
+          },
+          {
+            "id": "Qwen3.5-122B-A10B-Q4_K_M.gguf",
+            "name": "Qwen3.5-122B",
+            "input": ["text", "image"],
+            "contextWindow": 256000,
+            "maxTokens": 256000
+          }
+        ]
+      }
     }
-  }
 }
