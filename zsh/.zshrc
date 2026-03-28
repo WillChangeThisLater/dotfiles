@@ -436,7 +436,7 @@ alias s='source .venv/bin/activate'
 # tellr: tell | llm "cleanup"
 #alias tellr='tell | llm "this is a text to speech transcript from a user. clean up this transcript. remove fillers such as like and um. fix grammar when needed. also respond to user directives. if a user tells you to forget something, forget it. if a user tells you to reformat a specific thought, reformat it, etc. do NOT provide any comments on what changes you make - edit the transcript as if it were in the users words"'
 #alias codex='codex --dangerously-bypass-approvals-and-sandbox'
-alias firefox="/Applications/Firefox.app/Contents/MacOS/firefox"
+#alias firefox="/Applications/Firefox.app/Contents/MacOS/firefox"
 
 # Start ssh-agent if not already running
 if ! pgrep -u "$USER" ssh-agent > /dev/null; then
