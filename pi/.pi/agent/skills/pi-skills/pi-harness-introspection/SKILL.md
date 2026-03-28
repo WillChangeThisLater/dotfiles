@@ -1,5 +1,5 @@
 ---
-name: introspection
+name: pi-harness-introspection
 description: Inspect the pi harness itself (~/repos/pi-mono) to answer questions about commands, settings, or internals.
 ---
 

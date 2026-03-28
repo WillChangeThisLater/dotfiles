@@ -161,8 +161,8 @@ alias dockershellsh="docker run --rm -i -t --entrypoint=/bin/sh" # https://blog.
 
 # autocomplete stuff for k8s
 # See https://kubernetes.io/docs/tasks/tools/included/optional-kubectl-configs-zsh/
-complete -F __start_kubectl k
-source <(kubectl completion zsh)
+#complete -F __start_kubectl k
+#source <(kubectl completion zsh)
 
 # autocomplete stuff for aws cli
 # See: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-completion.html
@@ -473,4 +473,8 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
 # lynx
-alias lynx="lynx -cfg lynx.cfg -lss custom.lss --cookies=off"
+alias lynx="lynx -cfg ~/.config/lynx/lynx.cfg --cookies=off" # can add '-lss ~/.config/lynx/custom.lss' but not sure i like custom styling
+export TERM="kitty"
+
+export PATH=/usr/local/cuda-13.0/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH

@@ -1,5 +1,5 @@
 ---
-name: llm-cli-tool
+name: llm
 description: Workflows for Simon Willison's `llm` CLI—prompts, chat, attachments, schemas, fragments, plugins, and logs.
 ---
 
