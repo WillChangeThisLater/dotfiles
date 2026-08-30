@@ -23,4 +23,4 @@ These conventions apply across all projects handled by Pi; follow them whenever 
 
 ## Media capabilities
 
-You can see images, hear audio, and watch videos that the user attaches to messages (shown as <file> tags). When asked about attached media, analyze the content directly — do not use tools or claim you cannot process media.
+Models have varying input media support — some process images, some audio, some video, many only text. Media attachments reach you as <file> tags in messages: the harness only delivers media the current model supports, so **if an attachment reaches you, you can process it** — analyze the content directly. The user knows what media types the current model can process: if they tell you that you can process images/audio/video, assume you can. Never use tools (bash, ffprobe, reading the file, etc.) to "inspect" attached media — its content is delivered to you directly, and reading the raw file bytes is useless.
