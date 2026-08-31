@@ -264,9 +264,10 @@ cmd_release() {
         done
         rmdir "$STATE_ROOT/$agent" 2>/dev/null || true
     fi
-    # session cleanup when empty
+    # session cleanup when truly empty (0 windows — tmux usually auto-kills
+    # empty sessions, so this is a safety net; NEVER kill with windows remaining)
     if tmux has-session -t "$SESSION" 2>/dev/null; then
-        [[ "$(tmux list-windows -t "$SESSION" | wc -l)" -le 1 ]] \
+        [[ "$(tmux list-windows -t "$SESSION" | wc -l)" -eq 0 ]] \
             && tmux kill-session -t "$SESSION" 2>/dev/null \
             && echo "x11_env: session '$SESSION' now empty — killed it"
     fi
