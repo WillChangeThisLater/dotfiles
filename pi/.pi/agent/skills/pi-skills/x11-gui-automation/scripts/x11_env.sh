@@ -246,10 +246,29 @@ cmd_release_one() {
         echo "x11_env: killed Xvfb :$DISPLAY_NUM"
         rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}" 2>/dev/null
     fi
-    # app-registered cleanup targets (e.g. chrome profile dirs)
+    # app-registered cleanup targets
     local var val
     while IFS=$'\n' read -r line; do
-        case "$line" in PROFILE_DIR=*) val="${line#PROFILE_DIR=}"; [[ -d "$val" ]] && rm -rf "$val" && echo "x11_env: removed $val";; esac
+        case "$line" in
+            PROFILE_DIR=*) val="${line#PROFILE_DIR=}";;
+        esac
+    done < "$sf"
+    # persistent profiles sync back to the golden master BEFORE removal,
+    # so logins the agent made during the session persist for future agents
+    local persistent master
+    persistent=$(grep -m1 '^PERSISTENT=1' "$sf" 2>/dev/null)
+    master=$(grep -m1 '^PROFILE_MASTER=' "$sf" 2>/dev/null | cut -d= -f2)
+    if [[ -n "$persistent" && -n "$master" && -d "$val" ]]; then
+        echo "x11_env: syncing persistent profile back to $master"
+        mkdir -p "$master"
+        rsync -a --exclude 'Singleton*' --exclude 'Cache*' --exclude 'Code Cache*' --exclude 'GPUCache*' \
+            "$val/" "$master/" || echo "x11_env: WARNING profile sync-back failed" >&2
+    fi
+    # remove profile dirs (after sync-back)
+    while IFS=$'\n' read -r line; do
+        case "$line" in
+            PROFILE_DIR=*) val="${line#PROFILE_DIR=}"; [[ -d "$val" ]] && rm -rf "$val" && echo "x11_env: removed $val";;
+        esac
     done < "$sf"
     rm -f "$sf"   # keep $app.log — diagnostics survive cleanup on purpose
     echo "x11_env: released $agent/$app"
