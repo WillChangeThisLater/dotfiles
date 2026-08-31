@@ -13,6 +13,9 @@ Paul's system configuration, managed with [GNU Stow](https://www.gnu.org/softwar
 | `vim` | `~/.vimrc` | |
 | `lynx` | `~/.config/lynx` | Custom `lynx.cfg`, `custom.lss`, jumpfile |
 | `codex` | `~/.codex` | OpenAI Codex CLI config |
+| `git` | `~/.gitconfig` | Git identity + credential helper |
+| `ssh` | `~/.ssh/config` | GitHub host entry (keys themselves are NOT in this repo) |
+| `sway` | `~/.config/sway` | Sway window manager config (Mod1, vim-style keys) + `env` |
 | `pi` | `~/.pi/agent` | [pi coding-agent](https://github.com/badlogic/pi-mono) config: `AGENTS.md`, `models.json`, and the full set of agent **skills** (tmux, browser automation with per-site controls, x11-gui-automation, subagents, llama-server, and more) |
 
 ## Install
@@ -26,7 +29,10 @@ cd dotfiles
 ./install.sh
 ```
 
-`install.sh` clones TPM (if missing) and stows everything. After installing,
+`install.sh` clones TPM (if missing) and stows everything. Note: `git`, `ssh`,
+and `sway` stow into existing directories (`~/.ssh`, `~/.config/sway`) — if you
+already have real files there, move them aside first or use `stow --adopt`.
+After installing,
 launch `zsh` (set it as your login shell with `chsh -s $(which zsh)`) and open
 tmux, then press `prefix + I` to install tmux plugins.
 

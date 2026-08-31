@@ -61,7 +61,8 @@ fail=0
 for f in ~/.zshrc ~/.tmux.conf ~/.vimrc ~/.config/nvim ~/.oh-my-zsh \
          ~/.config/lynx/lynx.cfg ~/.pi/agent/AGENTS.md \
          ~/.pi/agent/skills/pi-skills/tmux/SKILL.md \
-         ~/.tmux/plugins/tpm/tpm; do
+         ~/.tmux/plugins/tpm/tpm ~/.gitconfig ~/.ssh/config \
+         ~/.config/sway/config; do
   if [ -e "$f" ]; then echo "OK      $f"; else echo "MISSING $f"; fail=1; fi
 done
 

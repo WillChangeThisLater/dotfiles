@@ -6,7 +6,7 @@ if [ ! -d "$HOME/.tmux/plugins/tpm" ]; then
     git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
 fi
 
-stow -t ~ neovim oh-my-zsh tmux vim zsh codex pi
+stow -t ~ neovim oh-my-zsh tmux vim zsh codex pi git ssh sway
 mkdir -p ~/.config/lynx
 stow -t ~/.config/lynx lynx
 
