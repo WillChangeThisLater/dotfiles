@@ -24,6 +24,20 @@ with your name already exists:
 bun scripts/message.ts list-panes -a # list named panes across ALL tmux sessions
 ```
 
+### Finding other agents' names (pi TUI footer)
+The pi TUI embeds the agent's name (its pi session id, e.g. `tray-fuller-8155`) in its
+status footer as `~ #<name>`. If an agent hasn't named its pane (or you're not sure
+which pane is which), capture panes and grep for the footer marker:
+
+```bash
+tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}' | while read -r p; do
+  echo "== $p"; tmux capture-pane -t "$p" -p | grep -o '#[a-z][a-z0-9-]*' | tail -2
+done
+```
+
+The `#<name>` you find is directly usable as a messaging recipient — agents are
+reachable by their pi session id even when the pane itself is unnamed.
+
 Silly as it may seem, you may sometimes forget your name. You can remember it with
 
 ```bash
