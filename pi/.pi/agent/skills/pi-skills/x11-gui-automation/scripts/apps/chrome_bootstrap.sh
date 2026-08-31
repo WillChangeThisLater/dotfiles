@@ -46,8 +46,8 @@ wid=$("$ENV" run "$agent" "$app" \
     "google-chrome --user-data-dir=$MASTER --remote-debugging-port=$port --no-sandbox --disable-gpu") \
     || { echo "ERROR: could not launch chrome" >&2; exit 2; }
 
-echo "BOOTSTRAP_PORT=$port" > "$STATE_ROOT/$agent/$app.bootstrap.env"
-echo "BOOTSTRAP_WINDOW=$wid" >> "$STATE_ROOT/$agent/$app.bootstrap.env"
+echo "BOOTSTRAP_PORT=$port" > "/tmp/x11-env/$agent/$app.bootstrap.env"
+echo "BOOTSTRAP_WINDOW=$wid" >> "/tmp/x11-env/$agent/$app.bootstrap.env"
 
 echo "chrome bootstrap: launched on master profile ($MASTER), CDP http://localhost:$port"
 echo ""
