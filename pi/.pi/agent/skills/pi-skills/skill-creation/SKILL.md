@@ -1,6 +1,6 @@
 ---
 name: skill-creation
-description: Process for proposing and authoring new skills under `~/.pi/agent/skills/agent-generated` based on lived experience.
+description: Process for proposing and authoring new skills under `~/.pi/agent/skills/pi-skills` based on lived experience.
 ---
 
 # Skill Creation Skill
@@ -15,7 +15,7 @@ Use this meta-skill when you have real experience that reveals a repeatable capa
 Do **not** reach for this skill at the beginning of a task or before you have real experience; new skills must be derived from actual usage, not speculation.
 
 ## Prerequisites
-1. Confirm there is no overlapping skill in `~/.pi/agent/skills/pi-skills/` or `~/.pi/agent/skills/agent-generated/` by scanning the directories and reading relevant `SKILL.md` files.
+1. Confirm there is no overlapping skill in `~/.pi/agent/skills/pi-skills/`  by scanning the directories and reading relevant `SKILL.md` files.
 2. Ensure you have concrete notes, commands, or examples from the session demonstrating the workflow/tool.
 3. **Always obtain explicit user approval** before creating a new skill.
 
@@ -33,7 +33,7 @@ Do **not** reach for this skill at the beginning of a task or before you have re
    - Gather command snippets, file paths, screenshots references, or templates from your lived experience.
 
 4. **Create the Skill Files**  
-   - Store agent-authored skills under `~/.pi/agent/skills/agent-generated/<skill-name>/`.  
+   - Store agent-authored skills under `~/.pi/agent/skills/pi-skills/<skill-name>/`.  
    - Follow the standard format:
      ```markdown
      ---
@@ -67,7 +67,7 @@ Do **not** reach for this skill at the beginning of a task or before you have re
 - Never create a skill without user consent. If the user declines or is unsure, defer and continue working without formalizing it.
 - Keep skills concise and actionable—focus on steps agents can reliably follow.
 - Avoid duplicating instructions from existing skills; instead, reference them when overlap exists.
-- Revise or retire agent-generated skills when they become obsolete or are superseded by official ones.
+- Revise or retire skills when they become obsolete or are superseded by official ones.
 
 ## Learned Lessons
 Document discoveries about effective skill authoring (naming, structure, validation steps) here for future updates.

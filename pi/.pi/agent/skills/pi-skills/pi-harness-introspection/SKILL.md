@@ -1,11 +1,11 @@
 ---
 name: pi-harness-introspection
-description: Inspect the pi harness itself (~/repos/pi-mono) to answer questions about commands, settings, or internals.
+description: Inspect the pi harness itself (~/repos/pi) to answer questions about commands, settings, or internals.
 ---
 
 # Pi Introspection Skill
 
-Use this skill whenever you or the user needs to understand how the pi harness works internally (commands like `/session`, startup behavior, skill loading, etc.). It guides you to examine the local pi source tree (`~/repos/pi-mono`, forked from `badlogic/pi-mono`) and relevant documentation.
+Use this skill whenever you or the user needs to understand how the pi harness works internally (commands like `/session`, startup behavior, skill loading, etc.). It guides you to examine the local pi source tree (`~/repos/pi`, forked from `badlogic/pi-mono`) and relevant documentation.
 
 ## When to Use
 - User asks “How does `/session` work?” “Where are sessions stored?” “How does skill discovery happen?”
@@ -14,7 +14,7 @@ Use this skill whenever you or the user needs to understand how the pi harness w
 - Debugging or extending the harness requires reading its source or docs.
 
 ## Repository Layout
-- `~/repos/pi-mono/` – full pi mono-repo fork
+- `~/repos/pi/` – full pi mono-repo fork
   - `packages/pi-coding-agent/` – main CLI + agent harness code (Node.js/TypeScript)
   - `docs/` – markdown docs mirrored under the installed npm package (`~/.nvm/.../node_modules/@mariozechner/pi-coding-agent/docs`)
   - `examples/`, `extensions/`, etc. for reference implementations
@@ -25,9 +25,9 @@ Use this skill whenever you or the user needs to understand how the pi harness w
    - Ask the user what they already know and what level of detail they need (high-level summary vs. code-level explanation).
 
 2. **Locate Source**
-   - Use `rg`, `ls`, or `find` inside `~/repos/pi-mono` to discover relevant files:
+   - Use `rg`, `ls`, or `find` inside `~/repos/pi` to discover relevant files:
      ```bash
-     cd ~/repos/pi-mono
+     cd ~/repos/pi
      rg -n "/session" -g"*.ts"
      ```
    - For docs, start with `docs/` or the npm-installed README (`~/.nvm/.../README.md`).

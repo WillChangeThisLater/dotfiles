@@ -50,6 +50,53 @@ Sticky-target rule:
 - After init, all tmux interactions for that assigned system must use the active target.
 - If a command would use a different target, stop and ask for confirmation first.
 
+## Targeting safety (mandatory — real incidents have damaged the human's sessions)
+
+Never send keystrokes to a target you did not **verify in the same breath**. Both
+rules below are absolute; convenience never justifies skipping them.
+
+1. **Verify immediately before every `send-keys`.** The command that sends keys
+   and the command that captures the pane's content must run together, and you
+   must actually look at the capture before pressing Enter on the send. If the
+   pane is not showing exactly what you expect (your shell, your prompt, your
+   app), do not send. Panes get renamed, reused, and moved by the human while
+   you work — a target verified 10 minutes ago is not verified.
+2. **Never construct targets dynamically.** No chaining commands with `||`
+   fallbacks, no grepping for window names to derive a target, no `-t` with a
+   computed string. If `new-window` fails, STOP and diagnose — do not fall
+   through to a different command. If you catch yourself writing
+   `tmux send-keys -t $(some pipeline)`, stop entirely.
+3. **Prefer pane IDs** (`%N`) for repeat interactions, but re-verify pane
+   content even then — pane IDs are stable, but *whose* pane they point at can
+   surprise you if the window list shifted between your steps.
+4. **For throwaway test environments, create them in a session you own** (e.g.
+   `tmux new-session -d -s my-test-env`), never as windows in the human's
+   attached session, and drive them only via their pane IDs captured at creation.
+5. If a send goes to the wrong pane anyway: tell the human immediately, exactly
+   what text went where, so they can undo/interrupt. Do not silently retry.
+
+## Self-reference / current-pane lookup
+When the user gives a relative target (for example, just a pane index like `pane 2`), resolve it against your current tmux context first.
+
+Use:
+```bash
+tmux display-message -p 'session=#{session_name} window=#{window_index}:#{window_name} pane=#{pane_index} id=#{pane_id}'
+```
+
+This reports the tmux client context where the command is executed. You can then infer missing pieces:
+- If user says `pane Z`, assume `<current-session>:<current-window>.Z`
+- If user says `window Y pane Z`, assume `<current-session>:Y.Z`
+
+After resolving, echo the fully-qualified target (`session:window.pane`) before sending keys.
+
+### Known edge case: context drift
+The current tmux client context can change over time (different active pane/client, renamed windows, reattached clients, etc.). A previously captured `(session, window, pane)` may become stale.
+
+Therefore:
+- Re-run the `display-message` lookup before important relative-target actions.
+- Re-run it whenever behavior seems inconsistent (for example, `send-keys` succeeds but effects appear in the wrong place or nowhere visible).
+- Prefer pane IDs (like `%3`) for immediate follow-up actions when available, but still refresh context periodically.
+
 # Interacting with panes
 Pane interaction is a fundamental part of tmux. There are two primitives `send-keys` and `capture-pane`. `send-keys` gives you the "write" side of the puzzle, `capture-pane` gives you the "read". Together you can do basically everything
 

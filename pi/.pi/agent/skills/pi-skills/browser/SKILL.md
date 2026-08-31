@@ -32,14 +32,40 @@ You should read `controls/README.md` now so you understand global control conven
 
 Before interacting with a site, extract its domain and check for:
 
-`controls/<domain>/controls.md`
+`controls/<domain>`
 
 If a controls file exists, use it before exploratory interaction.
 If no controls file exists, proceed carefully and minimize trial-and-error.
 
-When you discover reliable interaction patterns for a new site, ask the user before writing and then add:
+The pattern used to store controls is a bit murky.
+Some sites only have a single controls.md file
 
-`controls/<domain>/controls.md`
+    `controls/<domain>/controls.md`
+
+Other sites are a bit more involved. These sites may contain lots of pages with nested levels of hierarchy. For instance,
+
+```bash
+paul-MS-7E16% tree testsite.org
+myblog.org
+├── README.md
+└── blog
+    ├── finance
+    │   └── 1.php
+    │       └── controls.md
+    └── history-BFFM
+        └── 1.php
+            └── controls.md
+```
+
+You should run 'tree' on the top level domain to see the control layouts
+When you see more complex layouts, be intuitive. For instance, in the site
+above 'myblog.org/README.md' is likely to give you broad information about
+site 'myblog.org' like who owns it, how it is structured, what ai agents
+have done with this site in the past, etc. more concrete markdowns like
+myblog.org/blog/finance/1.php will likely give you nitty gritty details
+on how to interact with myblog.org/blob/finance/1.php
+
+When you discover reliable interaction patterns for a new site you should consider adding them as controls so other agents can benefit from your learnings. You should get confirmation from the user before you do this.
 
 If you update controls, keep entries concise and practical (quick start, key selectors, common patterns, known issues, verification).
 

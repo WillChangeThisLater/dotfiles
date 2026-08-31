@@ -208,7 +208,9 @@ function proxy() {
     #http_proxy=http://localhost:"$PORT" https_proxy=https://localhost:"$PORT" SSL_CERT_FILE=/Users/paul.wendt/.mitmproxy/mitmproxy-ca-cert.pem REQUESTS_CA_BUNDLE=/Users/paul.wendt/.mitmproxy/mitmproxy-ca-cert.pem $@
     # TODO: for golang, the https proxy MUST use http://
     # not sure if this impacts other things...
-    http_proxy=http://localhost:"$PORT" https_proxy=http://localhost:"$PORT" SSL_CERT_FILE=/Users/paul.wendt/.mitmproxy/mitmproxy-ca-cert.pem REQUESTS_CA_BUNDLE=/Users/paul.wendt/.mitmproxy/mitmproxy-ca-cert.pem $@
+    # NODE_EXTRA_CA_CERTS: node ignores SSL_CERT_FILE; needed for node CLIs (e.g. pi) to trust mitmproxy's CA
+    local ca_cert="$HOME/.mitmproxy/mitmproxy-ca-cert.pem"
+    http_proxy=http://localhost:"$PORT" https_proxy=http://localhost:"$PORT" SSL_CERT_FILE="$ca_cert" REQUESTS_CA_BUNDLE="$ca_cert" NODE_EXTRA_CA_CERTS="$ca_cert" $@
   fi
 }
 

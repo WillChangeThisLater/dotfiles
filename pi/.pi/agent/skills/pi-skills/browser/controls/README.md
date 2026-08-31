@@ -55,3 +55,6 @@ Each file should cover:
 - Documentation becomes outdated or incorrect
 
 **Why this matters:** Sites change often. Keeping documentation current ensures future agents can work reliably without rediscovering patterns or fighting outdated selectors.
+
+## Misc
+* Do note that the site level READMEs are worth reading. some READMEs will have patterns describing what this site is typically used for, which may help the agent better understand what it is being asked to do. For example, for a site like 'news.ycombinator.com', the README might note that the user navigates to this site when they want to read the top news for the day.
