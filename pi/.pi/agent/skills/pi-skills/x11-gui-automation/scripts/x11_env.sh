@@ -164,6 +164,9 @@ EOF
         echo "Diagnostics saved to $log" >&2
         release_lock
         trap - EXIT
+        # kill the Xvfb we started (state file doesn't exist yet, so release
+        # can't infer the display) — no orphaned X servers from failed claims
+        pkill -f "Xvfb :${display} " 2>/dev/null && rm -f "/tmp/.X${display}-lock" "/tmp/.X11-unix/X${display}" 2>/dev/null
         cmd_release_one "$agent" "$app" >/dev/null 2>&1
         exit 5
     fi
