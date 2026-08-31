@@ -55,10 +55,15 @@ paul-MS-7E16
 
 ## Messaging
 ### Message
+**Always introduce yourself.** Every message you send should open with who you are,
+e.g. `from:grey-laurel-3558` — this lets the recipient know the prompt came from
+another agent, not from the human. Recipients should treat an un-introduced message
+as if it came from Paul.
+
 You can send messages synchronously using `bun scripts/message.ts message`
 
 ```bash
-bun scripts/message.ts donald_trump "hi donald"
+bun scripts/message.ts donald_trump "from:bill_clinton hi donald, i need a favor"
 ```
 
 You can send messages to multiple recipients at once
