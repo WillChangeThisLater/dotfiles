@@ -135,7 +135,7 @@ cmd_claim() {
     # display isn't ready yet (startup race; -forever does not save it)
     wait_for 10 "ls /tmp/.X11-unix 2>/dev/null | grep -q 'X${display}$'" \
         || { echo "ERROR: Xvfb socket X$display did not appear" >&2; fail=1; }
-    tmux send-keys -t "$p_vnc" "env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE x11vnc -display :$display -rfbport $vnc -viewonly -forever -shared -nopw" Enter
+    tmux send-keys -t "$p_vnc" "env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE x11vnc -display :$display -rfbport $vnc -forever -shared -nopw" Enter
 
     mkdir -p "$STATE_ROOT/$agent"
     cat > "$sf" <<EOF

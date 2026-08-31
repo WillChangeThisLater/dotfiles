@@ -89,7 +89,7 @@ im.save('/tmp/shot-grid.png')
 ```
 
 ## Optional Human Observation
-VNC servers run **viewonly** on each display (started by `claim`). To watch an agent's screen: `vncviewer localhost:<VNC_PORT>` (port from `status` or the agent's message).
+VNC servers run (not viewonly — you can interact to help the agent) on each display (started by `claim`). To watch an agent's screen: `vncviewer localhost:<VNC_PORT>` (port from `status` or the agent's message).
 
 ## Cleanup is part of the job
 Release your env when the task is done (`$S release <agent> <app>`). If you die mid-task the human can sweep with `status` + `release <agent>`, and orphaned windows are reclaimed by the next claim — but don't rely on that.
