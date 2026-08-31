@@ -8,6 +8,28 @@ description: Run and control GUI applications in isolated X11 virtual displays (
 ## Purpose
 Use this skill to automate GUI applications in isolated X11 sessions so the human's main desktop cannot interfere.
 
+## Self-setup (preferred for agents doing browser work)
+When no human-provided environment exists, set it up yourself with the helper scripts — do NOT hand-roll Xvfb/chrome/x11vnc commands (port scans and tmux panes are error-prone and collide between agents):
+
+```bash
+# 1. claim an environment (atomic lock prevents two agents setting up at once)
+skills/x11-gui-automation/scripts/self_setup.sh <your-agent-name>
+# stdout (also written to /tmp/x11-env/<agent>.env, sourceable):
+#   DISPLAY_NUM=3 CHROME_PORT=9222 VNC_PORT=5902 TMUX_SESSION=env-setup TMUX_WINDOW=env-<agent>
+
+# 2. ... do browser work against http://localhost:$CHROME_PORT ...
+
+# 3. clean up when done
+skills/x11-gui-automation/scripts/teardown.sh <your-agent-name>
+```
+
+Semantics:
+- **Locking:** `mkdir`-based atomic lock in `/tmp/x11-env.lock`. A second agent's setup fails fast (exit 2) with a hint to retry — wait ~15s and re-run. Locks older than 10 min are considered stale and can be stolen.
+- **Idempotent:** re-running setup with the same agent id reuses the existing env and re-prints its values.
+- **Isolation:** one tmux window (`env-<agent>`) in the dedicated `env-setup` session per agent; displays/ports are allocated by scanning, so concurrent agents never overlap.
+- **Teardown is yours:** when finished with an environment, run `teardown.sh` so the next agent can use the ports. If you die mid-task, the human can run it, or it will be reclaimed via stale lock.
+- Human can always observe: `vncviewer localhost:<VNC_PORT>` (the VNC server runs viewonly).
+
 ## Session Contract (required)
 - One X display per application/task (example: `:2`).
 - Standard display geometry is fixed: **`1920x1080x24`**.
@@ -17,7 +39,9 @@ Use this skill to automate GUI applications in isolated X11 sessions so the huma
 - Prefer one primary app window per display session.
 - Rationale: fixed geometry enables stable pixel landmarks for per-application skills.
 
-## Human Coordination (required before setup)
+## Human Coordination (only when NOT self-setting-up)
+If the human has pre-spun the environment (they will tell you the display + chrome port — typically via a `/browser :N <port>` prompt), skip self-setup and use their values. Do not ask the human scaffold questions when you can self-setup; only coordinate display/ports when a human-provided environment already exists.
+
 Before starting or reusing a GUI session, ask the human:
 1. Do you want to scaffold the session yourself, or should I scaffold it?
 2. Which display number should we use (example: `:2`)?
