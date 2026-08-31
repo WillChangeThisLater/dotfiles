@@ -302,6 +302,7 @@ cmd_status() {
     local sf agent app line
     for sf in "$STATE_ROOT"/*/*.env; do
         [[ -f "$sf" ]] || continue
+        [[ "$sf" == *.bootstrap.env ]] && continue   # bootstrap artifacts, not envs
         agent=$(basename "$(dirname "$sf")"); app=$(basename "${sf%.env}")
         local display="" vnc="" declared="" window=""
         local -A ports=()

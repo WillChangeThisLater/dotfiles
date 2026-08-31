@@ -55,6 +55,12 @@ echo "NEXT STEPS:"
 echo "  1. tell the human: run 'vncviewer localhost:$VNC_PORT' and log into the sites they want captured (e.g. LinkedIn, Gmail)"
 echo "  2. when the human confirms they are done, kill chrome GRACEFULLY so cookies flush:"
 echo "       pkill -f 'user-data-dir=$MASTER'"
-echo "     (then verify $MASTER/Default/Cookies exists and is recent)"
+echo "     (then verify $MASTER/Default/Cookies exists and is recent)
+
+IMPORTANT: chrome flushes its cookie DB lazily (~every 45s). If you kill
+chrome right after logging in, the session may NEVER reach disk. Prefer
+shutting down via CDP: POST Browser.close to http://localhost:$port, or wait
+>45s after the last login before killing. Verify Default/Cookies actually
+contains a session row for the site."
 echo "  3. future agents get these sessions via: apps/chrome.sh <agent> <app> --persistent"
 exit 0
