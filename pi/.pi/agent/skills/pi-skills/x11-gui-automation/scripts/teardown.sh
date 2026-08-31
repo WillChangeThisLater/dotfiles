@@ -28,9 +28,15 @@ if [[ -f "$STATE_FILE" ]]; then
     CHROME_PORT="${CHROME_PORT:-}"
 fi
 
-tmux kill-window -t "$SESSION:$WINDOW" 2>/dev/null \
-    && echo "teardown: killed window $SESSION:$WINDOW" \
-    || echo "teardown: no window $SESSION:$WINDOW found (already gone?)"
+# kill ALL windows with this name by ID (names can be duplicated after reclaim races)
+WIDS=$(tmux list-windows -t "$SESSION" -F '#{window_name} #{window_id}' 2>/dev/null | awk -v w="$WINDOW" '$1==w{print $2}')
+for wid in $WIDS; do
+    tmux kill-window -t "$wid" 2>/dev/null && echo "teardown: killed window $wid"
+done
+LEFT=$(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -cx "$WINDOW" || true)
+if [[ "${LEFT:-0}" -gt 0 ]]; then
+    echo "teardown: WARNING could not fully clear windows named $WINDOW" >&2
+fi
 
 # kill the Xvfb process for this display (it can outlive its tmux pane)
 if [[ -n "${DISPLAY_NUM:-}" ]]; then

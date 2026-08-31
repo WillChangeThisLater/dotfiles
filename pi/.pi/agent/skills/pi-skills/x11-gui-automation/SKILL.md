@@ -27,6 +27,7 @@ Semantics:
 - **Locking:** `mkdir`-based atomic lock in `/tmp/x11-env.lock`. A second agent's setup fails fast (exit 2) with a hint to retry — wait ~15s and re-run. Locks older than 10 min are considered stale and can be stolen.
 - **Idempotent:** re-running setup with the same agent id reuses the existing env and re-prints its values.
 - **Isolation:** one tmux window (`env-<agent>`) in the dedicated `env-setup` session per agent; displays/ports are allocated by scanning, so concurrent agents never overlap.
+- **Self-cleaning:** a setup that fails its own verification tears itself down (window, Xvfb, ports) and leaves nothing behind, after saving pane diagnostics to `/tmp/x11-env/<agent>.log`. Orphaned windows from crashed runs are automatically reclaimed on the next setup attempt for the same agent id.
 - **Teardown is yours:** when finished with an environment, run `teardown.sh` so the next agent can use the ports. If you die mid-task, the human can run it, or it will be reclaimed via stale lock.
 - Human can always observe: `vncviewer localhost:<VNC_PORT>` (the VNC server runs viewonly).
 

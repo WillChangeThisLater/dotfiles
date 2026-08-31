@@ -26,6 +26,7 @@ LOCK_STALE_SECS=600
 STATE_DIR="/tmp/x11-env"
 SESSION="env-setup"
 WINDOW="env-${AGENT_ID}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p "$STATE_DIR"
 
@@ -97,13 +98,16 @@ VNC_PORT=$(alloc "VNC port" 5902 5999 '! lsof -i :${n} >/dev/null 2>&1') || {
 
 # --- Create tmux session/window ---------------------------------------------
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-    tmux new-session -d -s "$SESSION" -n "env-${AGENT_ID}"
+    tmux new-session -d -s "$SESSION" -n "$WINDOW"
+elif tmux list-windows -t "$SESSION" -F '#W' | grep -qx "$WINDOW"; then
+    # window exists but no .env file (checked earlier): residue of a crashed run.
+    echo "self_setup: found orphaned window '$WINDOW' without state — reclaiming it." >&2
+    "$SCRIPT_DIR/teardown.sh" "$AGENT_ID" >&2
+    # fall through to fresh creation; teardown may or may not have killed the session
+    tmux has-session -t "$SESSION" 2>/dev/null \
+        && tmux new-window -t "$SESSION" -n "$WINDOW" \
+        || tmux new-session -d -s "$SESSION" -n "$WINDOW"
 else
-    if tmux list-windows -t "$SESSION" -F '#W' | grep -qx "$WINDOW"; then
-        echo "ERROR: window '$WINDOW' already exists in session '$SESSION' but no .env file was found." >&2
-        echo "Hint: run teardown.sh $AGENT_ID first (or kill-window manually) to clean up the stale window." >&2
-        exit 4
-    fi
     tmux new-window -t "$SESSION" -n "$WINDOW"
 fi
 
@@ -146,13 +150,27 @@ if ! curl -s "http://localhost:${CHROME_PORT}/json/version" | grep -q Browser; t
     echo "ERROR: chrome debugging port ${CHROME_PORT} is not answering." >&2; FAIL=1
 fi
 if ! lsof -i :"$VNC_PORT" >/dev/null 2>&1; then
+    for _ in 1 2 3 4 5; do
+        sleep 1
+        lsof -i :"$VNC_PORT" >/dev/null 2>&1 && break
+    done
+fi
+if ! lsof -i :"$VNC_PORT" >/dev/null 2>&1; then
     echo "ERROR: x11vnc is not listening on port ${VNC_PORT}." >&2; FAIL=1
 fi
 
 if (( FAIL )); then
-    echo "Diagnostics: inspect tmux pane output:" >&2
-    echo "  tmux capture-pane -t $SESSION:$WINDOW -p" >&2
-    echo "Environment state was written to $STATE_DIR/${AGENT_ID}.env; run teardown.sh $AGENT_ID to clean up." >&2
+    # preserve diagnostics BEFORE self-cleaning (teardown removes the panes)
+    LOG="$STATE_DIR/${AGENT_ID}.log"
+    {
+        echo "=== self_setup.sh failed for $AGENT_ID (display :$DISPLAY_NUM, chrome :$CHROME_PORT, vnc :$VNC_PORT)"
+        for P in 0 1 2 3; do
+            echo "--- pane $P ---"
+            tmux capture-pane -t "$SESSION:$WINDOW.$P" -p 2>/dev/null | tail -30
+        done
+    } > "$LOG" 2>&1
+    echo "Diagnostics saved to $LOG (pane output before cleanup)." >&2
+    "$SCRIPT_DIR/teardown.sh" "$AGENT_ID" >&2
     exit 5
 fi
 
