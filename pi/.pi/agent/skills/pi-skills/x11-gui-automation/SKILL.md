@@ -6,191 +6,90 @@ description: Run and control GUI applications in isolated X11 virtual displays (
 # x11-gui-automation
 
 ## Purpose
-Use this skill to automate GUI applications in isolated X11 sessions so the human's main desktop cannot interfere.
+Automate GUI applications in isolated X11 sessions so the human's main desktop cannot interfere, and so agents can SEE what they're doing via screenshots.
 
-## Self-setup (preferred for agents doing browser work)
-When no human-provided environment exists, set it up yourself with the helper scripts — do NOT hand-roll Xvfb/chrome/x11vnc commands (port scans and tmux panes are error-prone and collide between agents):
+## The core convention: ONE DISPLAY PER APP
+Every (agent, app) pair gets its own Xvfb display, its own tmux window, its own state file. Never put two apps on one display if either needs input automation — they would fight over the same virtual mouse/keyboard. Displays are cheap; correctness is not.
+
+## The generic tool: `x11_env.sh`
 
 ```bash
-# 1. claim an environment (atomic lock prevents two agents setting up at once)
-skills/x11-gui-automation/scripts/self_setup.sh <your-agent-name>
-# stdout (also written to /tmp/x11-env/<agent>.env, sourceable):
-#   DISPLAY_NUM=3 CHROME_PORT=9222 VNC_PORT=5902 TMUX_SESSION=env-setup TMUX_WINDOW=env-<agent>
+S=skills/x11-gui-automation/scripts/x11_env.sh
 
-# 2. ... do browser work against http://localhost:$CHROME_PORT ...
-
-# 3. clean up when done
-skills/x11-gui-automation/scripts/teardown.sh <your-agent-name>
+$S claim <agent> <app>          # allocate display+VNC, create tmux window, write state
+$S run <agent> <app> <cmd...>   # run a command on the app's display (one-off apps)
+$S port <agent> <app> NAME 3000 "web ui for testing"
+                                # declare a port you opened so humans/agents can find it
+$S release <agent> [app]        # release one app, or all of an agent's apps
+$S status                       # live table: who is running what, where, alive or stale
 ```
 
-Semantics:
-- **Locking:** `mkdir`-based atomic lock in `/tmp/x11-env.lock`. A second agent's setup fails fast (exit 2) with a hint to retry — wait ~15s and re-run. Locks older than 10 min are considered stale and can be stolen.
-- **Idempotent:** re-running setup with the same agent id reuses the existing env and re-prints its values.
-- **Isolation:** one tmux window (`env-<agent>`) in the dedicated `env-setup` session per agent; displays/ports are allocated by scanning, so concurrent agents never overlap.
-- **Self-cleaning:** a setup that fails its own verification tears itself down (window, Xvfb, ports) and leaves nothing behind, after saving pane diagnostics to `/tmp/x11-env/<agent>.log`. Orphaned windows from crashed runs are automatically reclaimed on the next setup attempt for the same agent id.
-- **Teardown is yours:** when finished with an environment, run `teardown.sh` so the next agent can use the ports. If you die mid-task, the human can run it, or it will be reclaimed via stale lock.
-- Human can always observe: `vncviewer localhost:<VNC_PORT>` (the VNC server runs viewonly).
+- **State/registry:** `/tmp/x11-env/<agent>/<app>.env` — plain `KEY=VALUE` lines. It IS the registry; other agents and the human can read it. `status` renders it with liveness cross-checks and flags undeclared listening ports (detected via the env's tmux window processes).
+- **Locking:** atomic mkdir lock covers *setup only*. A second concurrent claim fails fast (exit 2) — wait ~15s and retry. Locks older than 10 min are stolen.
+- **Self-cleaning:** a failed claim tears itself down after saving pane diagnostics to `/tmp/x11-env/<agent>/<app>.log`. Orphaned windows (crashed runs) are reclaimed automatically.
+- **Declare what you open:** any port the human or another agent might need, register it with `$S port`. Bare listeners outside the X11 contract are invisible to the registry by design — don't rely on `status` to find them.
+- **Ask-for-eyes protocol:** whenever you ask the human to look at your screen, include the exact command from your state file, e.g. "run `vncviewer localhost:5903` and tell me what you see" — never make the human hunt for the port.
+
+## App-specific launchers (`scripts/apps/`)
+
+Some apps need bespoke knowledge (flags, automation channels, health checks). Those live in `apps/`:
+
+```bash
+scripts/apps/chrome.sh <agent>          # chrome + CDP remote debugging port (records CHROME_PORT)
+scripts/apps/kitty.sh <agent>           # kitty on X11 for rendering-debugging (e.g. kitten icat)
+```
+
+Each launcher prints how to automate it (chrome: CDP/DOM-first, xdotool only for pixels) and how to observe it (vncviewer command). To add a new app, write a ~20-line script: source the state file, launch via `$S run`, health check, record keys, print hints.
+
+## Standard browser flow (chrome)
+
+```bash
+S=skills/x11-gui-automation/scripts/x11_env.sh
+$S claim $AGENT_ID chrome
+skills/x11-gui-automation/scripts/apps/chrome.sh $AGENT_ID
+# ... automate: browser CLI / CDP with --port <CHROME_PORT> ...
+$S release $AGENT_ID chrome      # when done — release so the next agent gets the ports
+```
+
+Escalation ladder for chrome: **CDP/DOM first** (reliable, text-based) → **xdotool on the X display** for pixel-level interactions (React dropdowns, captchas) → **ask the human** with the exact vncviewer command. Every interaction loop: screenshot before, act, screenshot after, compare.
+
+## Rendering debugging (kitty and friends)
+
+For "is this app drawing what I think it's drawing?" — claim an env for the app, launch it, do the thing, then screenshot the display:
+
+```bash
+DISPLAY=:N scrot -o /tmp/check.png
+```
+
+The screenshot is ground truth. If you can't tell from the screenshot, ask the human with the vncviewer command.
+
+## Human-provided environments (only when the human pre-spins)
+
+If the human gives you a display + port (e.g. via `/browser :2 9222`), use their values and skip claiming. Do not ask the human scaffold questions you can answer yourself with `claim`.
 
 ## Session Contract (required)
-- One X display per application/task (example: `:2`).
-- Standard display geometry is fixed: **`1920x1080x24`**.
-- Keep user desktop separate (often Wayland `:0`).
-- Scope every automation command to the target display:
-  - `DISPLAY=:N ...`
-- Prefer one primary app window per display session.
-- Rationale: fixed geometry enables stable pixel landmarks for per-application skills.
+- Standard display geometry: **`1920x1080x24`** (fixed for stable pixel landmarks).
+- Scope every automation command to the target display: `DISPLAY=:N ...`
+- One primary app per display (see the one-display-per-app rule above).
+- Keep the user's desktop (usually Wayland `:0`) out of scope — never automate `:0`.
+- Wayland note: unset `WAYLAND_DISPLAY` and `XDG_SESSION_TYPE` for anything launched into an Xvfb display (the scripts do this for you).
+- If you verify dimensions manually: `DISPLAY=:N xdpyinfo | awk '/dimensions:/{print $2; exit}'` should say `1920x1080`.
 
-## Human Coordination (only when NOT self-setting-up)
-If the human has pre-spun the environment (they will tell you the display + chrome port — typically via a `/browser :N <port>` prompt), skip self-setup and use their values. Do not ask the human scaffold questions when you can self-setup; only coordinate display/ports when a human-provided environment already exists.
+## Screenshots & overlays
+- Capture: `DISPLAY=:N scrot -o /tmp/shot.png` (or `xwd -root | convert xwd:- out.png`).
+- To reason about click coordinates, annotate first — draw a labeled grid on the screenshot with PIL:
 
-Before starting or reusing a GUI session, ask the human:
-1. Do you want to scaffold the session yourself, or should I scaffold it?
-2. Which display number should we use (example: `:2`)?
-3. Which VNC port should we use if observation is needed (example: `5902`)?
-
-If the human is scaffolding, wait for confirmation that the app is running in the target display, then verify geometry and warn if it differs from `1920x1080x24`.
-If the agent is scaffolding, confirm display+port first, ensure the VNC port is free, then run setup with `1920x1080x24`.
-
-Process placement:
-- Human-scaffolded: typically run `Xvfb`, app, and `x11vnc` in separate tmux panes/windows.
-- Agent-scaffolded: use separate long-lived processes (separate panes/windows or background jobs) so each service stays running.
-
-## Setup: Start isolated GUI session
-1. Start virtual X server:
-```bash
-Xvfb :2 -screen 0 1920x1080x24
-```
-2. Launch app in that display (generic pattern):
-```bash
-DISPLAY=:N <app_command>
-```
-Example:
-```bash
-DISPLAY=:2 librecad
-```
-3. Verify display is alive and dimensions match standard:
-```bash
-DISPLAY=:2 xdpyinfo | head
-DISPLAY=:2 xdpyinfo | awk '/dimensions:/{print $2; exit}'
-```
-Expected dimensions: `1920x1080`
-
-If dimensions differ, warn the human that pixel landmarks may be unreliable for app-specific skills.
-
-## Optional Human Observation (recommended)
-Attach VNC to the isolated display (not to the main Wayland session).
-
-If agent is launching `x11vnc`, verify the port is free first:
-```bash
-lsof -iTCP:5902 -sTCP:LISTEN
-```
-If occupied, choose a new port and reconfirm with the human.
-
-Then start `x11vnc`:
-```bash
-env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE \
-  x11vnc -display :2 -rfbport 5902 -viewonly -forever -shared -nopw
-```
-
-Then connect with a VNC client:
-```bash
-vncviewer localhost:5902
-```
-
-Notes:
-- `x11vnc` is the VNC server bridge; it does not open a local viewer window itself.
-- If `x11vnc` reports Wayland detection, ensure `-display :N` is correct and unset the Wayland env vars as above.
-- For non-local use, configure authentication (`-rfbauth`) instead of `-nopw`.
-
-## Action Loop (required)
-For each action:
-1. **Observe** current state (`before` screenshot and/or window metadata).
-2. **Act** with scoped input (`xdotool`).
-3. **Verify** expected UI change (`after` screenshot/metadata).
-4. **Retry** with bounded attempts if verification fails.
-
-Minimum verification standard per step:
-- Save a `before` and `after` screenshot.
-- Confirm at least one expected signal changed (menu opened, tool selected, geometry changed, dialog appeared, etc.).
-
-Never assume an action succeeded without verification.
-
-## Input Primitives (xdotool)
-Keyboard:
-```bash
-DISPLAY=:2 xdotool key ctrl+s
-DISPLAY=:2 xdotool type --delay 30 "hello"
-```
-
-Mouse click:
-```bash
-DISPLAY=:2 xdotool mousemove 24 10 click 1
-```
-
-Drag:
-```bash
-DISPLAY=:2 xdotool mousemove 400 300 mousedown 1 mousemove 800 500 mouseup 1
-```
-
-## Screenshot Capture
-Preferred quick capture (available in this environment):
-```bash
-ffmpeg -y -f x11grab -video_size 1920x1080 -i :2 -frames:v 1 /tmp/shot.png
-```
-
-If geometry is unknown:
-```bash
-DISPLAY=:2 xdpyinfo | awk '/dimensions:/{print $2; exit}'
-```
-
-## Precision Mode: Grid Overlay + Drill-down
-Use this when coordinates are ambiguous or targets are small.
-
-1. Capture full screenshot.
-2. Add coarse grid overlay.
-3. Crop ROI (region of interest) around target.
-4. Add finer grid overlay on ROI.
-5. Click derived coordinate.
-6. Verify and repeat drill-down if needed.
-
-In this environment, `python3 + PIL` was used successfully to generate overlays when ImageMagick `convert` was unavailable.
-
-Example: add a 200px grid to a screenshot:
-```bash
-python3 - <<'PY'
+```python
 from PIL import Image, ImageDraw
 im = Image.open('/tmp/shot.png').convert('RGB')
 d = ImageDraw.Draw(im)
-w,h = im.size
-for x in range(0,w+1,200): d.line((x,0,x,h), fill=(0,255,102), width=1)
-for y in range(0,h+1,200): d.line((0,y,w,y), fill=(0,255,102), width=1)
+for x in range(0, im.width, 200): d.line([(x,0),(x,im.height)], fill=(255,0,0)); d.text((x+2,2), str(x), fill=(255,0,0))
+for y in range(0, im.height, 200): d.line([(0,y),(im.width,y)], fill=(255,0,0)); d.text((2,y+2), str(y), fill=(255,0,0))
 im.save('/tmp/shot-grid.png')
-PY
 ```
 
-## Known Behaviors / Gotchas
-- Wayland main sessions (`:0`) may expose Xwayland sockets; do not assume they are suitable x11vnc targets.
-- Display locks can be stale (`/tmp/.X1-lock`); prefer a fresh display number if uncertain.
-- Some WMs in virtual sessions may not support `_NET_ACTIVE_WINDOW`; rely on scoped actions + verification.
+## Optional Human Observation
+VNC servers run **viewonly** on each display (started by `claim`). To watch an agent's screen: `vncviewer localhost:<VNC_PORT>` (port from `status` or the agent's message).
 
-## Companion Notes
-- Captcha micro-skill: `capatcha.md`
-
-## Provenance
-### PI session UUID (how to get it)
-Derive the cwd-specific sessions directory, then read the UUID suffix from the newest filename:
-```bash
-slug="--$(pwd | sed 's#^/##; s#/#-#g')--"
-ls -lt "$HOME/.pi/agent/sessions/$slug" | head
-```
-Example filename:
-`2026-08-26T20-25-59-475Z_01a03fc0-41b3-74cf-9c6f-57cb158a867e.jsonl`
-
-Session used for this skill:
-- pi session UUID: `01a03fc0-41b3-74cf-9c6f-57cb158a867e`
-
-Created from live session on 2026-08-26 while automating LibreCAD in `Xvfb :2`, validating:
-- screenshot capture,
-- xdotool menu interaction,
-- rectangle drawing,
-- VNC observation via x11vnc with Wayland env vars unset.
+## Cleanup is part of the job
+Release your env when the task is done (`$S release <agent> <app>`). If you die mid-task the human can sweep with `status` + `release <agent>`, and orphaned windows are reclaimed by the next claim — but don't rely on that.
