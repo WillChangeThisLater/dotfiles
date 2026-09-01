@@ -11,7 +11,7 @@ offers primitives such as:
 
 
 ```bash
-# go to hackernews in a new tab
+# go to hackernews in a new tab (--port = the CDP port you resolved, see "CDP port selection")
 browser go news.ycombinator.com --port 9222
 # list all tabs running in chrome
 browser tabs --port 9222
@@ -23,7 +23,35 @@ browser screenshot --port 9222 --tab <tabId>
 
 1. The `browser` CLI should be available on the system PATH. Run `which browser` to confirm this. Complain if this causes an error
 2. If `browser` CLI _is_ available, run `browser -h` and make sure it returns something
-3. Confirm that a chrome instance is running AND exposing a remote debugging port on localhost:9222. Do NOT set this up yourself! That chrome instance should be managed by a human user; the human user is the only one who should start or stop this insance.
+3. Resolve which CDP port to use — see "CDP port selection" below. The default is 9222, but 9222 is NOT always yours.
+
+# CDP port selection (read this before connecting — real incident 2026-09-01)
+
+Multiple agents share this machine, and any of them may have registered its own chrome
+instance on an Xvfb display. Port 9222 is a convention, not a reservation. Attaching to
+someone else's browser makes you type into *their* session, and makes your tabs appear in
+*their* VNC view — the victim experiences this as their browser being "hijacked".
+
+Before your first browser command, resolve the port:
+
+1. **If you are running in an x11 automation environment** (Xvfb + x11vnc, see the
+   x11-gui-automation skill): use the CDP port registered for YOUR environment.
+   Check the registry: `~/.pi/agent/skills/pi-skills/x11-gui-automation/scripts/x11_env.sh status`.
+   If your environment has no chrome yet, start one with `--remote-debugging-port=<free port>`
+   and register it in the env. Do not assume 9222 is yours.
+2. **Otherwise (human's desktop chrome assumed)**: default to 9222, but verify nobody else
+   owns it first:
+   - `curl -s http://localhost:9222/json/version` — if this answers, SOME chrome is live on 9222.
+   - Check whose it is: `~/.pi/agent/skills/pi-skills/x11-gui-automation/scripts/x11_env.sh status`
+     (a live entry claiming 9222 = another agent's browser — do NOT attach), or ask the human.
+   - If it's clearly the human's own chrome (they set it up for you), attach. If you cannot
+     tell, ask before attaching.
+3. **If the port is taken and you need your own browser**: pick a free port (9223, 9224, ...)
+   and launch your own instance, e.g.
+   `chrome --remote-debugging-port=9223 --user-data-dir=/tmp/chrome-9223-profile`.
+   Use `--port 9223` on every browser CLI command.
+4. **Hygiene while attached**: reuse one tab (`--tab`) instead of spawning new ones, close
+   the tabs you opened when done, and never close tabs you did not open.
 
 # Usage
 ## Controls
@@ -90,7 +118,9 @@ Options:
 
 Commands:
   go [options] <url>                Navigate to URL (creates new tab, or use --tab to navigate existing)
-  click [options] <selector>        Click element (optionally navigate first with --url, or use --tab for existing tab)
+  click [options] <target>          Click element (css:/text:/aria: targets; trusted input events;
+                                    --verify <js> post-click check; --tab for existing tab)
+  aim [options] <target> <path>     Screenshot with crosshair at where a click would land (no click)
   type [options] <selector> <text>  Type text into input (optionally navigate first with --url, or use --tab for existing
                                     tab)
   screenshot [options] <path>       Capture screenshot (optionally navigate first with --url, or use --tab for existing tab)
@@ -108,7 +138,7 @@ Commands:
 
 The `browser` CLI is somewhat verbose as it is intended for AI agents. There are two patterns you should use again and again:
 
-  * ALWAYS supply --port 9222 as a flag in your arguments, unless the user specifies otherwise. `browser` CLI makes no assumptions about where your chrome instance is running: it just needs a way to connect to it
+  * ALWAYS supply an explicit --port flag matching the port you resolved in "CDP port selection" (9222 only if you verified nobody else owns it). `browser` CLI makes no assumptions about where your chrome instance is running: it just needs a way to connect to it
   * ALWAYS specify --tab if you want to perform multiple operations on the same tab. If you leave `--tab` unspecified the browser CLI will assume you want to run in a new tab. You should only spin up new tabs for exceptional purposes - clutter is bad!
   * ALWAYS specify --timeout 5000 initially to your commands. The default system timeout of 120 seconds is too long. You can always increase the timeout if needed. Increase in multiples of 2 (5s -> 10s -> 20s). Alert the user if you hit a command that times out after > 30s; that could indicate network instability that requires human intervention to fix
 
