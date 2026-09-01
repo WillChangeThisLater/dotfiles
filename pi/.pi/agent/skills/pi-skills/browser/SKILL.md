@@ -112,6 +112,46 @@ The `browser` CLI is somewhat verbose as it is intended for AI agents. There are
   * ALWAYS specify --tab if you want to perform multiple operations on the same tab. If you leave `--tab` unspecified the browser CLI will assume you want to run in a new tab. You should only spin up new tabs for exceptional purposes - clutter is bad!
   * ALWAYS specify --timeout 5000 initially to your commands. The default system timeout of 120 seconds is too long. You can always increase the timeout if needed. Increase in multiples of 2 (5s -> 10s -> 20s). Alert the user if you hit a command that times out after > 30s; that could indicate network instability that requires human intervention to fix
 
+## Clicking and aiming (preferred over eval-based clicks)
+
+`browser click` supports three target kinds:
+
+- `css:<selector>` (or a bare CSS selector) — e.g. `browser click "button[type=submit]"`
+- `text:<substring>` — clickable element whose text contains the substring, e.g. `browser click "text:Save"`
+- `aria:<label substring>` — element by aria-label, e.g. `browser click "aria:Close dialog"`
+
+`click` resolves the **real hit-target** (if the matched element is hidden — e.g. a visually-hidden
+`<input>` whose styled ancestor div is the actual click surface — it walks up to the visible
+ancestor), scrolls it into view, and clicks its center using **trusted CDP input events**. It prints
+JSON including the resolved element, rect, and center coordinates.
+
+Why this matters: `eval "el.click()"` dispatches a *synthetic* event that React-style frameworks
+frequently ignore or revert (form state gets re-synced and your click silently un-happens). Trusted
+input events via `browser click` do not have this problem. Prefer it over eval clicks.
+
+Two verification options:
+
+- `--verify "<js>"` — evaluate a JS expression after the click and return it, e.g.
+  `--verify "document.querySelector('input[type=checkbox]').checked"`. Use it to confirm the click
+  had its intended effect in the same command.
+- `browser aim <target> <path>` — **no click**. Injects a crosshair into the live DOM at the point a
+  click would land, screenshots, removes the marker, and prints the rect/center. Use it when you are
+  about to click at the X11 level (xdotool) or want to confirm targeting before an irreversible
+  click. The returned viewport coordinates + window geometry are the correct input for xdotool —
+  NEVER eyeball pixel coordinates from a plain screenshot.
+
+```bash
+browser aim "text:Submit application" /tmp/aim.png --tab <tabId> --port 9222
+# read /tmp/aim.png — crosshair should sit on the button
+browser click "text:Submit application" --tab <tabId> --port 9222 --verify "document.body.innerText.includes('Thanks')"
+```
+
+## eval hygiene
+
+- The `eval` execution context **shares globals across calls** in a tab. Top-level `const x` in one
+  call collides with the next (`Identifier 'x' has already been declared`). Always wrap eval code in
+  an IIFE: `browser eval "(() => { ... })()"`.
+
 ## Workflow (required)
 
 When exploring or interacting with unfamiliar pages, use this exact evaluation loop for every meaningful action:

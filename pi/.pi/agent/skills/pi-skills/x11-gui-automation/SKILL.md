@@ -93,6 +93,20 @@ If the human gives you a display + port (e.g. via `/browser :2 9222`), use their
 - Wayland note: unset `WAYLAND_DISPLAY` and `XDG_SESSION_TYPE` for anything launched into an Xvfb display (the scripts do this for you).
 - If you verify dimensions manually: `DISPLAY=:N xdpyinfo | awk '/dimensions:/{print $2; exit}'` should say `1920x1080`.
 
+### Coordinate discipline (learned from real failures)
+
+- Prefer `browser click` (trusted input events, no pixel math at all). Reach for xdotool only when
+  the browser-level path genuinely cannot work (OS chrome, file dialogs, captchas).
+- A browser screenshot is **viewport page pixels** — NOT screen coordinates. To convert for xdotool:
+  `screen_x = win_x + viewport_x`, `screen_y = win_y + chrome_height + viewport_y`, where the window
+  position comes from `xdotool getwindowgeometry <WID>` and chrome_height is the tab+URL bar (~88px,
+  varies). Better: get the viewport coords from `browser aim <target> /tmp/aim.png` (which also
+  shows a crosshair preview of the exact click point) instead of eyeballing a screenshot.
+- Beware multiple windows: `xdotool search --class chrome | head -1` can return a 10×10 helper
+  window. List all matches with geometry and pick the large, titled one.
+- After every xdotool click, verify the DOM effect (`browser eval` / screenshot) — never assume the
+  click landed where you computed.
+
 ## Screenshots & overlays
 - Capture: `DISPLAY=:N scrot -o /tmp/shot.png` (or `xwd -root | convert xwd:- out.png`).
 - To reason about click coordinates, annotate first — draw a labeled grid on the screenshot with PIL:
