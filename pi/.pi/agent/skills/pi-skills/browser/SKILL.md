@@ -155,6 +155,13 @@ The `browser` CLI is somewhat verbose as it is intended for AI agents. There are
 ancestor), scrolls it into view, and clicks its center using **trusted CDP input events**. It prints
 JSON including the resolved element, rect, and center coordinates.
 
+**Rect sanity check (learned from a real failure):** the reported rect can be a CONTAINER rect,
+not the element's — e.g. a 38px `<li>` reporting a 576×200 listbox rect, or a 176px button
+reporting 576×39. The click then lands at the container center and silently selects/clicks the
+wrong thing. Cross-check the printed rect width/height against `getBoundingClientRect()` via
+eval; when they disagree, prefer `browser aim` to confirm, or fall back to calibrated xdotool
+screen coordinates (see the x11 skill's Clicking discipline).
+
 Why this matters: `eval "el.click()"` dispatches a *synthetic* event that React-style frameworks
 frequently ignore or revert (form state gets re-synced and your click silently un-happens). Trusted
 input events via `browser click` do not have this problem. Prefer it over eval clicks.

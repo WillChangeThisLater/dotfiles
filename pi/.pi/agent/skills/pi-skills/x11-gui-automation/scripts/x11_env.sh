@@ -197,7 +197,18 @@ cmd_run() {
         die "tmux session '$SESSION' is gone — environment was torn down" 1
     fi
     echo "RUN_WINDOW=$wid" >> "$sf"
-    tmux send-keys -t "$wid.0" "env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE DISPLAY=:$DISPLAY_NUM $*" Enter
+    # Two calling conventions, both supported:
+    #   run a b steam 'steam://install/236390'        (single string = shell command LINE;
+    #                                                   sent verbatim, zsh parses quotes)
+    #   run a b zenity --text "Which am I?"           (multiple args = %q-escaped words;
+    #                                                   safe for quotes/globs per arg)
+    local cmdline
+    if (( $# == 1 )); then
+        cmdline="$1"
+    else
+        cmdline=$(printf '%q ' "$@")
+    fi
+    tmux send-keys -t "$wid.0" "env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb SDL_VIDEODRIVER=x11 DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus} DISPLAY=:$DISPLAY_NUM $cmdline; echo \"[run] exited rc=\$?\"" Enter
     echo "$wid"
 }
 

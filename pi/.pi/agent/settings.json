@@ -1,0 +1,15 @@
+{
+  "lastChangelogVersion": "0.84.4",
+  "defaultThinkingLevel": "low",
+  "defaultProvider": "openrouter",
+  "defaultModel": "z-ai/glm-5.3-flash",
+  "compaction": {
+    "enabled": false
+  },
+  "hideThinkingBlock": true,
+  "viMode": true,
+  "theme": "dark",
+  "dictation": {
+    "stopWords": ["peacock"]
+  }
+}
