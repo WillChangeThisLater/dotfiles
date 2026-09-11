@@ -21,6 +21,12 @@ browser screenshot --port 9222 --tab <tabId>
 
 # Installation and setup
 
+0. Where the CLI comes from: `browser` is installed from the `browser-cli` repo at
+   `~/repos/browser-cli` (github: WillChangeThisLater/browser-cli). It is installed globally
+   via npm (`npm install -g` from that repo), so the binary lives at
+   `~/.nvm/versions/node/<version>/bin/browser` symlinked to
+   `.../lib/node_modules/browser-cli/dist/index.js`. To rebuild/reinstall after source
+   changes: `cd ~/repos/browser-cli && npm install -g .`.
 1. The `browser` CLI should be available on the system PATH. Run `which browser` to confirm this. Complain if this causes an error
 2. If `browser` CLI _is_ available, run `browser -h` and make sure it returns something
 3. Resolve which CDP port to use — see "CDP port selection" below. The default is 9222, but 9222 is NOT always yours.
