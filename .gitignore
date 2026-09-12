@@ -9,3 +9,7 @@ pi/.pi/agent/models-store.json
 pi/.pi/agent/models/
 pi/.pi/agent/sessions/
 pi/.pi/agent/bin/
+
+# private keys — never version
+ssh/.ssh/github
+ssh/.ssh/known_hosts*
