@@ -476,7 +476,12 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 # lynx
 alias lynx="lynx -cfg ~/.config/lynx/lynx.cfg --cookies=off" # can add '-lss ~/.config/lynx/custom.lss' but not sure i like custom styling
-export TERM="kitty"
+#export TERM="kitty"
 
 export PATH=/usr/local/cuda-13.0/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH
+
+# pi dictation: use quantized whisper tiny model (~3.4x faster than base.en on this box).
+# Note: this model is quantized (q5_1) — known trade off: slightly worse accuracy
+# on rare/unusual words in exchange for the speed.
+export PI_DICTATION_BACKEND="whisper-cli -m ~/.pi/agent/models/ggml-tiny.en-q5_1.bin -nt {file}"

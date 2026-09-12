@@ -1,3 +1,11 @@
 # Personal writing samples (employer names / private content) — kept locally only
 pi/.pi/agent/skills/pi-skills/write-like-me/samples/09_resume-feedback.md
 pi/.pi/agent/skills/pi-skills/write-like-me/samples/11_personal-narrative.md
+
+# machine-local pi agent state (credentials, sessions, models) — never version
+pi/.pi/agent/auth.json
+pi/.pi/agent/trust.json
+pi/.pi/agent/models-store.json
+pi/.pi/agent/models/
+pi/.pi/agent/sessions/
+pi/.pi/agent/bin/
