@@ -62,14 +62,32 @@ async function trySh(cmd: string, args: string[]): Promise<{ stdout: string; std
 	}
 }
 
-/** Run a command on the remote host over ssh (single round-trip, argv-safe). */
+/** Run a command on the remote host over ssh (single round-trip, argv-safe, key-auth only). */
 function ssh(host: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-	return sh("ssh", ["--", host, ...args]);
+	return sh("ssh", ["-o", "BatchMode=yes", "--", host, ...args]);
 }
 
 /** Single-quote a string for safe embedding in a remote shell command string. */
 function sq(s: string): string {
 	return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+/**
+ * One-shot remote probe used by both /move and /move-check. Detects pi (with a
+ * login-shell fallback for nvm-managed installs), tool availability, project
+ * git state, and existing tmux sessions (SESS= prefixed to avoid parse clashes).
+ */
+function buildProbeScript(cwd: string): string {
+	return `cwd=${sq(cwd)}; ` +
+		'P=$(command -v pi || $SHELL -lc "command -v pi" 2>/dev/null); echo PI=$P; ' +
+		'echo VERV=$($P --version 2>/dev/null); ' +
+		'echo APPROVE=$($P --help 2>/dev/null | grep -c -- --approve); ' +
+		'echo TMUXV=$(tmux -V 2>/dev/null); echo GITV=$(git --version 2>/dev/null); ' +
+		'echo RSYNCV=$(rsync --version 2>/dev/null | head -1); ' +
+		'test -d "$cwd" && echo CWD_OK || echo CWD_MISSING; ' +
+		'echo AUTH=$(test -f "$HOME/.pi/agent/auth.json" && echo YES || echo NO); ' +
+		'echo HOME=$HOME; git -C "$cwd" rev-parse HEAD 2>/dev/null; ' +
+		'tmux list-sessions -F "SESS=#{session_name}" 2>/dev/null';
 }
 
 async function trySsh(host: string, args: string[]): Promise<{ stdout: string; stderr: string } | null> {
@@ -245,31 +263,27 @@ export default function (pi: ExtensionAPI) {
 			// Remote checks (single ssh round-trip, same probe as /move)
 			const cwd = process.cwd();
 			notify(`Probing ${host}...`);
-			const probe = await trySsh(host, [
-				`cwd=${sq(cwd)}; ` +
-					'echo PI=$(command -v pi || echo MISSING); pi --version 2>/dev/null; ' +
-					'echo APPROVE=$(pi --help 2>/dev/null | grep -c -- --approve); ' +
-					'echo TMUXV=$(tmux -V 2>/dev/null); echo GITV=$(git --version 2>/dev/null); ' +
-					'echo RSYNCV=$(rsync --version 2>/dev/null | head -1); ' +
-					'echo AUTH=$(test -f .pi/agent/auth.json && echo YES || echo NO); ' +
-					'test -d "$cwd" && echo CWD_OK || echo CWD_MISSING; ' +
-					'echo HOME=$HOME; git -C "$cwd" rev-parse HEAD 2>/dev/null; ' +
-					'tmux list-sessions -F "#{session_name}" 2>/dev/null',
-			]);
+			const probe = await trySsh(host, [buildProbeScript(cwd)]);
 			if (!probe || (!probe.stdout && probe.stderr)) {
-				bad(`ssh ${host}`, probe?.stderr?.trim() ?? "no response");
+				const err = probe?.stderr?.trim() ?? "no response";
+				if (/Permission denied|publickey|password/i.test(err)) {
+					bad(`ssh ${host}`, "key auth not set up — run: ssh-copy-id " + host);
+				} else {
+					bad(`ssh ${host}`, err);
+				}
 				ctx.ui.notify("/move-check results:\n" + results.join("\n"), "error");
 				return;
 			}
-			ok(`ssh ${host}`);
+			ok(`ssh ${host}`, "key auth working");
 			const lines = probe.stdout.trim().split("\n");
 			const find = (p: string) => lines.find((l) => l.startsWith(p))?.slice(p.length);
 
 			const piPath = find("PI=");
-			if (!piPath || piPath === "MISSING") bad("remote pi on PATH", `not found on ${host}`);
-			else {
+			if (!piPath || piPath === "MISSING") {
+				bad("remote pi on PATH", `not found on ${host}, even via login shell`);
+			} else {
 				const localV = (await trySh("pi", ["--version"]))?.stdout.trim();
-				const remoteV = lines.find((l) => /^\d+\.\d+\.\d+/.test(l.trim()))?.trim();
+				const remoteV = find("VERV=");
 				if (remoteV && localV && remoteV !== localV)
 					warn("remote pi version", `local=${localV} remote=${remoteV}`);
 				else ok("remote pi version", remoteV ?? piPath);
@@ -292,7 +306,7 @@ export default function (pi: ExtensionAPI) {
 				warn("git parity", `diverged: local=${localHead.slice(0, 8)} remote=${remoteHead.slice(0, 8)} — use --worktree or --force-sync`);
 			else ok("git parity", remoteHead ? remoteHead.slice(0, 8) : "local not a git repo");
 
-			const remoteSessions = lines.filter((l) => !l.includes("=") && !/^\d/.test(l) && l.trim() !== "");
+			const remoteSessions = lines.filter((l) => l.startsWith("SESS=")).map((l) => l.slice(5));
 			if (remoteSessions.length) ok("remote tmux sessions", remoteSessions.join(", "));
 			else warn("remote tmux sessions", "none running");
 
@@ -356,27 +370,23 @@ export default function (pi: ExtensionAPI) {
 
 			// ---- Phase 1: preflight ----
 			notify(`Preflight on ${opts.host}...`);
-			const probe = await trySsh(opts.host, [
-				`cwd=${sq(cwd)}; ` +
-					'echo PI=$(command -v pi || echo MISSING); pi --version 2>/dev/null; ' +
-					'echo TMUXV=$(tmux -V 2>/dev/null); echo GITV=$(git --version 2>/dev/null); ' +
-					'echo RSYNCV=$(rsync --version 2>/dev/null | head -1); ' +
-					'test -d "$cwd" && echo CWD_OK || echo CWD_MISSING; ' +
-					'echo HOME=$HOME; echo APPROVE=$(pi --help 2>/dev/null | grep -c -- --approve); ' +
-					'git -C "$cwd" rev-parse HEAD 2>/dev/null; ' +
-					'tmux list-sessions -F "#{session_name}" 2>/dev/null',
-			]);
-			if (!probe || probe.stderr.includes("Could not resolve") || probe.stderr.includes("Permission denied") || probe.stderr.includes("Connection refused")) {
-				fail(`ssh to ${opts.host} failed: ${probe?.stderr?.trim() ?? "no response"}`);
+			const probe = await trySsh(opts.host, [buildProbeScript(cwd)]);
+			if (!probe || (!probe.stdout && probe.stderr)) {
+				const err = probe?.stderr?.trim() ?? "no response";
+				if (/Permission denied|publickey|password/i.test(err)) {
+					fail(`ssh key auth to ${opts.host} is not set up (avoided prompting for a password). Run: ssh-copy-id ${opts.host}`);
+				} else {
+					fail(`ssh to ${opts.host} failed: ${err}`);
+				}
 				return;
 			}
 			const lines = probe.stdout.trim().split("\n");
 			const piPath = lines.find((l) => l.startsWith("PI="))?.slice(3);
 			if (!piPath || piPath === "MISSING") {
-				fail(`pi not found on ${opts.host} (not on PATH).`);
+				fail(`pi not found on ${opts.host}, even via login shell ($SHELL -lc).`);
 				return;
 			}
-			const remotePiVersion = lines.find((l) => /^\d+\.\d+\.\d+/.test(l.trim()))?.trim();
+			const remotePiVersion = lines.find((l) => l.startsWith("VERV="))?.slice(5).trim();
 			const localPiVersion = (await trySh("pi", ["--version"]))?.stdout.trim();
 			if (remotePiVersion && localPiVersion && remotePiVersion !== localPiVersion) {
 				notify(`Warning: pi version mismatch local=${localPiVersion} remote=${remotePiVersion} (session format should still be compatible).`);
@@ -391,7 +401,7 @@ export default function (pi: ExtensionAPI) {
 			const remoteHome = lines.find((l) => l.startsWith("HOME="))?.slice(5) || "/home/paul";
 			const remoteSupportsApprove = (lines.find((l) => l.startsWith("APPROVE="))?.slice(8) ?? "0") !== "0";
 			const remoteHead = cwdOk && !opts.worktree ? (lines.find((l) => /^[0-9a-f]{40}$/.test(l)) ?? null) : null;
-			const remoteSessions = lines.filter((l) => !l.includes("=") && !/^\d/.test(l) && l.trim() !== "");
+			const remoteSessions = lines.filter((l) => l.startsWith("SESS=")).map((l) => l.slice(5));
 
 			// ---- Phase 2: transfer ----
 			const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
@@ -513,10 +523,13 @@ export default function (pi: ExtensionAPI) {
 				`Listening services from the old host are NOT migrated (v0 limitation).`;
 
 			notify(`Launching on ${opts.host}...`);
-			const remoteCmd =
-				`cd ${finalCwd} && pi --session ${sessionId} --name ${JSON.stringify(sessionName)}` +
+			// Wrap in a login shell so nvm-managed node/pi resolve on hosts where pi is not on the
+			// non-interactive PATH (tmux runs window commands non-interactively).
+			const piArgs =
+				`pi --session ${sessionId} --name ${JSON.stringify(sessionName)}` +
 				(opts.noAutoapprove ? "" : remoteSupportsApprove ? " --approve" : "") +
 				` --append-system-prompt ${JSON.stringify(note)}`;
+			const remoteCmd = `cd ${sq(finalCwd)} && exec $SHELL -lc ${sq(piArgs)}`;
 			const launch = await sshCode(opts.host, [
 				opts.tmuxSession
 					? `tmux new-window -t ${sq(opts.tmuxSession)} -n ${sq(opts.agent)} -d ${sq(remoteCmd)}`
