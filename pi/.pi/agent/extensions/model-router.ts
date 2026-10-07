@@ -29,6 +29,7 @@
  *
  * Commands: /model-routing (alias /jev):
  *   on | off                          session-only toggle of auto routing
+ *   (manual /model or model-cycle switches turn routing off)
  *   classifier <name>                 switch active classifier (saved)
  *   classifier list|add|remove        manage classifier profiles
  *   conf <x> [classifier=n]           per-classifier global confidence gate
@@ -488,7 +489,9 @@ export default function activate(pi: ExtensionAPI) {
       setStatus(ctx, `route "${targetId}" not found — kept ${currentId}`);
       return;
     }
+    suppressManualSelectOnce = true; // our own switch must not disable routing
     const ok = await pi.setModel(model);
+    suppressManualSelectOnce = false; // handler ran during the await; clear defensively anyway
     if (!ok) {
       setStatus(ctx, `no credentials for ${targetId} — kept ${currentId}`);
       return;
@@ -501,6 +504,26 @@ export default function activate(pi: ExtensionAPI) {
       }
     }
     setStatus(ctx, `${result.task} → ${targetId} (conf ${result.confidence.toFixed(2)} ≥ ${needConf})`);
+  });
+
+  // Manual model selection disables auto routing for the session. The router's
+  // own switches also arrive here as source "set", so they are guarded by a
+  // flag set around pi.setModel(). "restore" (session startup) never disables.
+  let suppressManualSelectOnce = false;
+  pi.on("model_select", async (event, ctx) => {
+    if (suppressManualSelectOnce) {
+      suppressManualSelectOnce = false;
+      return;
+    }
+    if (event.source === "restore") return;
+    if (!cfg.enabled) return;
+    cfg.enabled = false;
+    pendingType = null; // reset hysteresis across the boundary
+    setStatus(ctx, "disabled (manual model switch)");
+    ctx.ui.notify(
+      `model-routing off — you picked ${event.model.provider}/${event.model.id} manually; re-enable with /model-routing on`,
+      "info",
+    );
   });
 
   const routingCommand = async (args: string, ctx: ExtensionContext) => {
