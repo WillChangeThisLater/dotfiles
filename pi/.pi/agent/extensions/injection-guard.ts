@@ -32,14 +32,19 @@
  * Latency shortcuts: skip edit/write results and tiny outputs, cache verdicts by content hash,
  * scan >chunkChars outputs as overlapping chunks in parallel.
  *
- * Config: ~/.pi/agent/settings.json -> { "injectionGuard": { ... } } (see DEFAULTS). The global
-*   default there applies to every session. /guard on|off and the "Turn guard off" dialogs are
-*   SESSION-scoped only (reset to the global default on each new session); /guard default on|off
-*   persists the global default.
- * Env: JEV_API_KEY (or TYPESAFE_API_KEY); JEV_BASE_URL / JEV_MODEL optional.
+ * Config: ~/.pi/agent/settings.json -> { "injectionGuard": { ... } }. Classifier profiles
+ * (jev default / kev local / any System One endpoint) each carry their own baseUrl, timeout,
+ * and block/warn thresholds — probability scales differ per model, so thresholds must too.
+ * /guard classifier <name> switches; /guard block|warn edit the ACTIVE profile's gates.
+ * The global default applies to every session. /guard on|off and the "Turn guard off" dialogs
+ * are SESSION-scoped only (reset to the global default on each new session); /guard default
+ * on|off persists the global default.
+ * Env: JEV_API_KEY (or TYPESAFE_API_KEY); JEV_BASE_URL / JEV_MODEL optionally override the
+ * active profile's endpoint/model; no key is needed for localhost endpoints.
  * Red-team kit: ./injection-guard-redteam/README.md (hands-on: ./redteam.sh --stage mal-web-comment)
  * Command: /guard (status) · /guard on|off · /guard mode auto|act|read · /guard block|warn <0..1>
- *          /guard log · /guard release <n> · /guard clear · /guard test <text>
+ *          /guard classifier <name>|list|add|remove · /guard log · /guard release <n>
+ *          /guard clear · /guard test <text>
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -52,16 +57,44 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 // Config
 // ---------------------------------------------------------------------------
 
-const DEFAULTS = {
+const DEFAULTS: Config = {
 	enabled: true,
-	mode: "auto" as "auto" | "act" | "read",
-	blockAt: 0.9,
-	warnAt: 0.5,
+	mode: "auto",
+	/** Active classifier profile name. */
+	classifier: "jev",
+	/**
+	 * System One classifier backends. Each carries its own block/warn gates because the
+	 * probability scale differs per model: Jev is sharp (p≈0.9+ on a real injection), while
+	 * Kev's GGUF ships calibration temperature 2.406, which flattens it (p≈0.5-0.6). Editing
+	 * gates always writes to the ACTIVE profile - never compare a Kev p against a Jev threshold.
+	 */
+	classifiers: {
+		jev: {
+			baseUrl: "https://api.typesafe.ai/v1",
+			apiKeyEnv: "JEV_API_KEY",
+			model: "jev-latest",
+			timeoutMs: 2000,
+			blockAt: 0.9,
+			warnAt: 0.5,
+		},
+		kev: {
+			// Local llama.cpp decision model (Kev-4B GGUF). No API key needed.
+			// DEGRADED for this task: red-team calibrated 8/11 best case vs Jev's 10/11, with fully
+			// overlapping benign/malicious distributions (see injection-guard-redteam/README.md).
+			// Use only as an outage fallback; the taint gate, not this tripwire, is what holds.
+			baseUrl: "http://127.0.0.1:8080/v1",
+			apiKeyEnv: undefined,
+			model: "kev-latest",
+			timeoutMs: 1000,
+			blockAt: 0.3,
+			warnAt: 0.2,
+		},
+	},
+	/** A warn-level verdict also taints the session (risky actions then need a human). */
 	taintOnWarn: true,
 	/** Human explicitly allowing a risky action while tainted also clears the taint. */
 	clearTaintOnAllow: true,
-	failMode: "taint" as "taint" | "open",
-	timeoutMs: 2000,
+	failMode: "taint",
 	/** Outputs shorter than this can't carry a meaningful injection. */
 	minChars: 40,
 	chunkChars: 16000,
@@ -75,13 +108,66 @@ const DEFAULTS = {
 	/** Tools that never count as risky (still subject to secret-path checks). */
 	safeTools: ["read", "grep", "find", "ls", "edit", "write", "bash"],
 };
-type Config = typeof DEFAULTS;
+
+export interface ClassifierProfile {
+	baseUrl: string;
+	/** Env var holding the API key. Not required when baseUrl is localhost. */
+	apiKeyEnv?: string;
+	model: string;
+	timeoutMs: number;
+	blockAt: number;
+	warnAt: number;
+}
+
+interface Config {
+	enabled: boolean;
+	mode: "auto" | "act" | "read";
+	classifier: string;
+	classifiers: Record<string, ClassifierProfile>;
+	taintOnWarn: boolean;
+	clearTaintOnAllow: boolean;
+	failMode: "taint" | "open";
+	minChars: number;
+	chunkChars: number;
+	chunkOverlap: number;
+	maxChunks: number;
+	skipTools: string[];
+	trustedBash: string[];
+	safeTools: string[];
+}
+
 const SETTINGS = join(homedir(), ".pi", "agent", "settings.json");
+
+function isLocalBaseUrl(url: string): boolean {
+	return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(url);
+}
+
+function activeProfile(cfg: Config): ClassifierProfile {
+	return cfg.classifiers[cfg.classifier] ?? cfg.classifiers.jev;
+}
 
 function loadConfig(): Config {
 	try {
 		const raw = JSON.parse(readFileSync(SETTINGS, "utf8"));
-		return { ...structuredClone(DEFAULTS), ...(raw?.injectionGuard ?? {}) };
+		const u = raw?.injectionGuard ?? {};
+		const cfg: Config = { ...structuredClone(DEFAULTS), ...u };
+		cfg.classifiers = structuredClone(DEFAULTS.classifiers);
+		for (const [name, p] of Object.entries(u.classifiers ?? {})) {
+			cfg.classifiers[name] = { ...(cfg.classifiers[name] ?? ({} as ClassifierProfile)), ...(p as object) } as ClassifierProfile;
+		}
+		// Migrate legacy top-level gates/timeout into the jev profile (single-classifier era).
+		if (u.classifiers === undefined) {
+			const jev = cfg.classifiers.jev;
+			if (typeof u.blockAt === "number") jev.blockAt = u.blockAt;
+			if (typeof u.warnAt === "number") jev.warnAt = u.warnAt;
+			if (typeof u.timeoutMs === "number") jev.timeoutMs = u.timeoutMs;
+		}
+		if (!cfg.classifiers[cfg.classifier]) cfg.classifier = "jev";
+		// Env overrides remain a one-off escape hatch for the active profile's endpoint.
+		const active = activeProfile(cfg);
+		if (process.env.JEV_BASE_URL) active.baseUrl = process.env.JEV_BASE_URL;
+		if (process.env.JEV_MODEL) active.model = process.env.JEV_MODEL;
+		return cfg;
 	} catch {
 		return structuredClone(DEFAULTS);
 	}
@@ -90,8 +176,10 @@ function loadConfig(): Config {
 function saveConfig(cfg: Config): string | null {
 	try {
 		const raw = JSON.parse(readFileSync(SETTINGS, "utf8"));
-		const { mode, blockAt, warnAt } = cfg;
-		raw.injectionGuard = { ...(raw.injectionGuard ?? {}), enabled: cfg.enabled, mode, blockAt, warnAt };
+		const prev = raw.injectionGuard ?? {};
+		// Drop legacy single-classifier keys - their values now live in classifiers.jev.
+		const { blockAt: _blockAt, warnAt: _warnAt, timeoutMs: _timeoutMs, ...rest } = prev;
+		raw.injectionGuard = { ...rest, enabled: cfg.enabled, mode: cfg.mode, classifier: cfg.classifier, classifiers: cfg.classifiers };
 		writeFileSync(SETTINGS, JSON.stringify(raw, null, 2) + "\n");
 		return null;
 	} catch (e) {
@@ -116,26 +204,64 @@ export const QUESTION = {
 	},
 };
 
-function jevKey(): string | undefined {
-	return process.env.JEV_API_KEY ?? process.env.TYPESAFE_API_KEY;
+/** True when the profile can be called: localhost needs no key, cloud profiles do. */
+export function classifierReady(profile: ClassifierProfile): boolean {
+	if (isLocalBaseUrl(profile.baseUrl)) return true;
+	return (profile.apiKeyEnv !== undefined && process.env[profile.apiKeyEnv] !== undefined) || process.env.TYPESAFE_API_KEY !== undefined;
 }
 
-/** One Jev call. Returns p(injection) or throws. */
-export async function jevInjectionProb(state: Record<string, unknown>, signal: AbortSignal): Promise<number> {
-	const key = jevKey();
-	if (!key) throw new Error("no JEV_API_KEY");
-	const base = process.env.JEV_BASE_URL ?? "https://api.typesafe.ai/v1";
-	const res = await fetch(`${base}/systemone`, {
+function profileKey(profile: ClassifierProfile): string | undefined {
+	if (profile.apiKeyEnv && process.env[profile.apiKeyEnv]) return process.env[profile.apiKeyEnv];
+	return process.env.TYPESAFE_API_KEY;
+}
+
+/** The legacy env-only Jev profile (used when no profile is passed, e.g. by the redteam kit). */
+function envJevProfile(): ClassifierProfile {
+	return {
+		...DEFAULTS.classifiers.jev,
+		baseUrl: process.env.JEV_BASE_URL ?? DEFAULTS.classifiers.jev.baseUrl,
+		model: process.env.JEV_MODEL ?? DEFAULTS.classifiers.jev.model,
+	};
+}
+
+/**
+ * One System One classifier call. Returns p(injection) or throws.
+ * Signature kept for the redteam kit (detect.ts); the extension passes an explicit profile.
+ */
+export async function jevInjectionProb(
+	state: Record<string, unknown>,
+	signal: AbortSignal,
+	profile: ClassifierProfile = envJevProfile(),
+): Promise<number> {
+	const headers: Record<string, string> = { "content-type": "application/json" };
+	const local = isLocalBaseUrl(profile.baseUrl);
+	if (!local) {
+		const key = profileKey(profile);
+		if (!key) throw new Error(`no ${profile.apiKeyEnv ?? "JEV_API_KEY"}`);
+		headers.authorization = `Bearer ${key}`;
+	}
+	const res = await fetch(`${profile.baseUrl}/systemone`, {
 		method: "POST",
-		headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-		body: JSON.stringify({ model: process.env.JEV_MODEL ?? "jev-latest", state, questions: QUESTION }),
+		headers,
+		body: JSON.stringify({ model: profile.model, state, questions: QUESTION }),
 		signal,
 	});
-	if (!res.ok) throw new Error(`jev HTTP ${res.status}`);
+	if (!res.ok) throw new Error(`${profile.model} HTTP ${res.status}`);
 	const json: any = await res.json();
 	const p = json?.answers?.verdict?.probabilities?.injection;
-	if (typeof p !== "number") throw new Error("jev: malformed answer");
+	if (typeof p !== "number") throw new Error(`${profile.model}: malformed answer`);
 	return p;
+}
+
+/** Parse "key=value" tokens into a record (classifier add/set). */
+function parseKv(tokens: string[]): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const t of tokens) {
+		const eq = t.indexOf("=");
+		if (eq <= 0) continue;
+		out[t.slice(0, eq).toLowerCase()] = t.slice(eq + 1).replace(/^"|"$/g, "");
+	}
+	return out;
 }
 
 function chunks(text: string, size: number, overlap: number): string[] {
@@ -265,7 +391,12 @@ export default function activate(pi: ExtensionAPI) {
 	function status(ctx: ExtensionContext) {
 		if (!effective())
 			return ctx.ui.setStatus("guard", sessionEnabled === false ? "🛡 guard off (this session)" : "🛡 guard off");
-		if (!jevKey()) return ctx.ui.setStatus("guard", "🛡 NO JEV_API_KEY — nothing scanned, session will taint");
+		const prof = activeProfile(cfg);
+		if (!classifierReady(prof))
+			return ctx.ui.setStatus(
+				"guard",
+				`🛡 NO ${prof.apiKeyEnv ?? "API KEY"} for classifier "${cfg.classifier}" — nothing scanned, session will taint`,
+			);
 		const flagged = [...verdicts.values()].filter((v) => v.status === "flagged").length;
 		// No live taint indicator: taint only ever manifests as a dialog/notify, so a permanent
 		// suffix is ambient noise. The precise state + reason stays in `/guard` status.
@@ -299,10 +430,11 @@ export default function activate(pi: ExtensionAPI) {
 			const scanned = parts.slice(0, cfg.maxChunks);
 			v.chunks = scanned.length;
 			const ctrl = new AbortController();
-			const timer = setTimeout(() => ctrl.abort(), cfg.timeoutMs);
+			const prof = activeProfile(cfg);
+			const timer = setTimeout(() => ctrl.abort(), prof.timeoutMs);
 			try {
 				const ps = await Promise.all(
-					scanned.map((chunk) => jevInjectionProb({ tool: toolName, source, text: chunk }, ctrl.signal)),
+					scanned.map((chunk) => jevInjectionProb({ tool: toolName, source, text: chunk }, ctrl.signal, prof)),
 				);
 				v.p = Math.max(...ps);
 				stats.scanned++;
@@ -319,7 +451,8 @@ export default function activate(pi: ExtensionAPI) {
 		}
 		v.ms = Date.now() - t0;
 		stats.scanMs += v.ms;
-		if (v.status !== "unscanned") v.status = v.p >= cfg.blockAt ? "flagged" : v.p >= cfg.warnAt ? "warn" : "clean";
+		const prof = activeProfile(cfg);
+		if (v.status !== "unscanned") v.status = v.p >= prof.blockAt ? "flagged" : v.p >= prof.warnAt ? "warn" : "clean";
 
 		if (v.status === "warn" && cfg.taintOnWarn) setTaint(ctx, `#${v.n} ${toolName} scored p=${v.p.toFixed(2)}`);
 		if ((v.status === "unscanned" || v.note?.startsWith("only")) && cfg.failMode === "taint")
@@ -416,7 +549,8 @@ export default function activate(pi: ExtensionAPI) {
 		if (!jobs.length) return;
 		const t0 = Date.now();
 		let timer: NodeJS.Timeout | undefined;
-		await Promise.race([Promise.allSettled(jobs), new Promise((r) => (timer = setTimeout(r, cfg.timeoutMs)))]);
+		const prof = activeProfile(cfg);
+		await Promise.race([Promise.allSettled(jobs), new Promise((r) => (timer = setTimeout(r, prof.timeoutMs)))]);
 		clearTimeout(timer);
 		const waited = Date.now() - t0;
 		stats.addedMs += waited;
@@ -541,7 +675,7 @@ export default function activate(pi: ExtensionAPI) {
 	// -------------------------------------------------------------------------
 
 	pi.registerCommand("guard", {
-		description: "Prompt-injection guard (Jev): /guard help — status, on/off, thresholds, modes, remediation",
+		description: "Prompt-injection guard (System One classifier): /guard help — status, classifier switch, thresholds, modes, remediation",
 		handler: async (args: string, ctx: ExtensionContext) => {
 			const [sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			const say = (msg: string, level: "info" | "warning" | "error" = "info") => ctx.ui.notify(msg, level);
@@ -573,9 +707,66 @@ export default function activate(pi: ExtensionAPI) {
 				case "warn": {
 					const v = Number(rest[0]);
 					if (!(v > 0 && v <= 1)) return say(`usage: /guard ${sub} <0..1>`);
-					if (sub === "block") cfg.blockAt = v;
-					else cfg.warnAt = v;
-					return save(`${sub}At=${v}`);
+					const prof = activeProfile(cfg);
+					const nextBlock = sub === "block" ? v : prof.blockAt;
+					const nextWarn = sub === "warn" ? v : prof.warnAt;
+					if (nextWarn >= nextBlock)
+						return say(`warn (${nextWarn}) must be below block (${nextBlock}) — warn would never apply`, "warning");
+					prof.blockAt = nextBlock;
+					prof.warnAt = nextWarn;
+					return save(`${sub}At=${v} (classifier "${cfg.classifier}" scale); block≥${nextBlock} warn≥${nextWarn}`);
+				}
+				case "classifier": {
+					const name = rest[0]?.toLowerCase();
+					const describe = (n: string, pr: ClassifierProfile) =>
+						`  ${n === cfg.classifier ? "▸" : " "} ${n.padEnd(10)} ${pr.baseUrl}${isLocalBaseUrl(pr.baseUrl) ? " [local]" : ""}  model=${pr.model}  block≥${pr.blockAt}  warn≥${pr.warnAt}  timeout=${pr.timeoutMs}ms${classifierReady(pr) ? "" : "  (no key)"}`;
+					if (!name || name === "list") {
+						return say(
+							`classifiers (active: ${cfg.classifier}):\n${Object.entries(cfg.classifiers).map(([n, pr]) => describe(n, pr)).join("\n")}\n\n` +
+								`/guard classifier <name> to switch · /guard classifier add <name> baseUrl=<url> [model=m] [block=x] [warn=x] [timeout=ms] [keyEnv=VAR] · /guard classifier remove <name>`,
+						);
+					}
+					if (name === "add") {
+						const nm = rest[1]?.toLowerCase();
+						if (!nm) return say("usage: /guard classifier add <name> baseUrl=<url> [model=m] [block=x] [warn=x] [timeout=ms] [keyEnv=VAR]");
+						if (cfg.classifiers[nm]) return say(`classifier "${nm}" already exists — edit settings.json or remove it first`);
+						const kv = parseKv(rest.slice(2));
+						if (!kv.baseurl && !kv.url) return say("baseUrl=<url> is required\nexample: /guard classifier add laya url=http://127.0.0.1:8080/v1 model=laya-latest block=0.6 warn=0.35");
+						const local = isLocalBaseUrl(kv.baseurl ?? kv.url!);
+						const block = kv.block !== undefined ? Number(kv.block) : local ? 0.6 : 0.9;
+						const warn = kv.warn !== undefined ? Number(kv.warn) : local ? 0.35 : 0.5;
+						if (!(block > 0 && block <= 1) || !(warn > 0 && warn <= 1)) return say("block/warn must be in 0..1");
+						if (warn >= block) return say(`warn (${warn}) must be below block (${block}) — warn would never apply`);
+						cfg.classifiers[nm] = {
+							baseUrl: kv.baseurl ?? kv.url!,
+							apiKeyEnv: kv.keyenv || undefined,
+							model: kv.model ?? "default",
+							timeoutMs: Number(kv.timeout) || (local ? 1000 : 2000),
+							blockAt: block,
+							warnAt: warn,
+						};
+						return save(`classifier "${nm}" added — switch with /guard classifier ${nm}`);
+					}
+					if (name === "remove" || name === "rm") {
+						const nm = rest[1]?.toLowerCase();
+						if (!nm || !cfg.classifiers[nm]) return say(`usage: /guard classifier remove <name> (have: ${Object.keys(cfg.classifiers).join(", ")})`);
+						if (nm === cfg.classifier) return say(`"${nm}" is the active classifier — switch first`);
+						delete cfg.classifiers[nm];
+						return save(`classifier "${nm}" removed`);
+					}
+					if (!cfg.classifiers[name]) return say(`no classifier "${name}" (have: ${Object.keys(cfg.classifiers).join(", ")})`);
+					if (name !== cfg.classifier) {
+						cfg.classifier = name;
+						const pr = cfg.classifiers[name];
+						const err = saveConfig(cfg);
+						status(ctx);
+						return say(
+							`injection-guard: classifier → ${name} (${pr.baseUrl}) block≥${pr.blockAt} warn≥${pr.warnAt}${err ? ` — FAILED to save: ${err}` : " (saved)"}` +
+								(classifierReady(pr) ? "" : `\nNOTE: no key for this classifier — scans will fail${cfg.failMode === "taint" ? " and taint the session" : ""}`),
+							err ? "error" : "info",
+						);
+					}
+					return say(`already using classifier "${name}"`);
 				}
 				case "clear":
 					taint = null;
@@ -602,11 +793,16 @@ export default function activate(pi: ExtensionAPI) {
 					if (!text) return say("usage: /guard test <text>");
 					const t0 = Date.now();
 					try {
-						const p = await jevInjectionProb({ tool: "manual", source: "/guard test", text }, AbortSignal.timeout(cfg.timeoutMs));
-						const s = p >= cfg.blockAt ? "FLAGGED" : p >= cfg.warnAt ? "warn" : "clean";
-						return say(`p(injection)=${p.toFixed(3)} → ${s} (${Date.now() - t0}ms)`);
+						const prof = activeProfile(cfg);
+						const p = await jevInjectionProb(
+							{ tool: "manual", source: "/guard test", text },
+							AbortSignal.timeout(prof.timeoutMs),
+							prof,
+						);
+						const s = p >= prof.blockAt ? "FLAGGED" : p >= prof.warnAt ? "warn" : "clean";
+						return say(`p(injection)=${p.toFixed(3)} → ${s} (${cfg.classifier}, ${Date.now() - t0}ms)`);
 					} catch (e) {
-						return say(`jev failed: ${e instanceof Error ? e.message : e}`, "error");
+						return say(`classifier "${cfg.classifier}" failed: ${e instanceof Error ? e.message : e}`, "error");
 					}
 				}
 				case undefined: {
@@ -614,7 +810,11 @@ export default function activate(pi: ExtensionAPI) {
 					const avg = stats.scanned ? Math.round(stats.scanMs / (stats.scanned + stats.cached + stats.failed)) : 0;
 					return say(
 						`injection-guard ${effective() ? "ON" : "OFF"}${sessionEnabled === false ? " (session override; global default " + (cfg.enabled ? "ON" : "OFF") + ")" : sessionEnabled === true ? " (session override; global default " + (cfg.enabled ? "ON" : "OFF") + ")" : ""} · mode=${cfg.mode} (${{ auto: "read-gate untrusted sources, act-gate the rest", act: "verify before act", read: "verify before read" }[cfg.mode]}) · /guard help for details\n` +
-							`thresholds: block≥${cfg.blockAt} warn≥${cfg.warnAt} · timeout ${cfg.timeoutMs}ms · fail=${cfg.failMode} · key ${jevKey() ? "ok" : "MISSING"}\n\n` +
+							`classifier ${cfg.classifier} (${activeProfile(cfg).baseUrl}) · thresholds: block≥${activeProfile(cfg).blockAt} warn≥${activeProfile(cfg).warnAt} · timeout ${activeProfile(cfg).timeoutMs}ms · fail=${cfg.failMode} · key ${classifierReady(activeProfile(cfg)) ? "ok" : "MISSING"}\n` +
+							`other classifiers: ${Object.entries(cfg.classifiers)
+								.filter(([n]) => n !== cfg.classifier)
+								.map(([n, p]) => `${n}(block≥${p.blockAt} warn≥${p.warnAt})`)
+								.join(", ") || "none"}\n\n` +
 							`scanned ${stats.scanned} (${stats.chunks} chunks) · cached ${stats.cached} · skipped ${stats.skipped} · failed ${stats.failed}\n` +
 							`avg scan ${avg}ms · latency added to agent: ${(stats.addedMs / 1000).toFixed(2)}s total, max wait ${stats.maxWaitMs}ms\n` +
 							`flagged ${all.filter((v) => v.status === "flagged").length} · warn ${all.filter((v) => v.status === "warn").length} · unscanned ${all.filter((v) => v.status === "unscanned").length}\n` +
@@ -636,7 +836,23 @@ export default function activate(pi: ExtensionAPI) {
 						`ENABLE / DISABLE (saved to settings.json > injectionGuard)\n` +
 						`  /guard off           disable: nothing scanned, no prompts; taint cleared\n` +
 						`  /guard on            re-enable\n\n` +
+						`CLASSIFIER\n` +
+						`  /guard classifier            list profiles (active marked) with their scales\n` +
+						`  /guard classifier NAME      switch the active classifier live + persist it.\n` +
+						`                              Thresholds are PER CLASSIFIER: Jev is sharp (p≈0.9+\n` +
+						`                              on a real injection); Kev (local GGUF) is flattened by\n` +
+						`                              its calibration temperature (p≈0.5-0.6), so block/warn\n` +
+						`                              must be set per backend. Useful as an outage fallback:\n` +
+						`                              /guard classifier kev when the Jev API is unreachable\n` +
+						`                              (needs llama-server on :8080). NOTE: local models are a\n` +
+						`                              DEGRADED tripwire (Kev-4B scores 8/11 on the redteam kit vs\n` +
+						`                              Jev's 10/11, with overlapping distributions); the taint\n` +
+						`                              gate, not the tripwire, is what holds in that mode.\n` +
+						`  /guard classifier add NAME baseUrl=URL [model=M] [block=X] [warn=X]\n` +
+						`                              [timeout=MS] [keyEnv=VAR]   any /v1/systemone server\n` +
+						`  /guard classifier remove NAME\n\n` +
 						`THRESHOLDS & MODE\n` +
+						`  (block/warn edit the ACTIVE classifier's profile; warn must stay below block)\n` +
 						`  /guard block N       0..1 (default 0.9). p(injection) ≥ N: output withheld from\n` +
 						`                       the agent, review dialog appears (keep / release / abort /\n` +
 						`                       turn guard off). Raise if legit attack-discussion text\n` +
