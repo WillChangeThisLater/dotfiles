@@ -92,11 +92,22 @@ cmd_claim() {
     [[ -n "$agent" && -n "$app" ]] || die "usage: x11_env.sh claim <agent> <app>"
     local sf; sf=$(state_file "$agent" "$app")
 
-    # idempotent re-claim
+    # idempotent re-claim — but self-heal if the environment is dead
     if [[ -f "$sf" ]]; then
-        echo "x11_env: env for $agent/$app already exists. Reusing." >&2
-        cat "$sf"
-        return 0
+        local dnum vport live=1
+        dnum=$(grep -m1 '^DISPLAY_NUM=' "$sf" | cut -d= -f2)
+        vport=$(grep -m1 '^VNC_PORT=' "$sf" | cut -d= -f2)
+        ls "/tmp/.X11-unix/X${dnum}" 2>/dev/null >/dev/null || live=0
+        if (( live )) && ! port_listening "$vport"; then live=0; fi
+        if (( live )); then
+            echo "x11_env: env for $agent/$app already exists. Reusing." >&2
+            cat "$sf"
+            return 0
+        fi
+        # orphaned state (Xvfb/vnc/tmux died while /tmp state survived)
+        echo "x11_env: stale state for $agent/$app (display/vnc dead) — releasing orphan and re-claiming." >&2
+        cmd_release_one "$agent" "$app" >/dev/null 2>&1
+        sf=$(state_file "$agent" "$app")
     fi
 
     acquire_lock_or_die
@@ -135,7 +146,7 @@ cmd_claim() {
     # display isn't ready yet (startup race; -forever does not save it)
     wait_for 10 "ls /tmp/.X11-unix 2>/dev/null | grep -q 'X${display}$'" \
         || { echo "ERROR: Xvfb socket X$display did not appear" >&2; fail=1; }
-    tmux send-keys -t "$p_vnc" "env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE x11vnc -display :$display -rfbport $vnc -forever -shared -nopw" Enter
+    tmux send-keys -t "$p_vnc" "env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE x11vnc -display :$display -rfbport $vnc -forever -shared -localhost -nopw" Enter
 
     mkdir -p "$STATE_ROOT/$agent"
     cat > "$sf" <<EOF

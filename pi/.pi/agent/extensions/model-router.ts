@@ -23,9 +23,18 @@
  *    current model, show a brief status note, never block or error the turn.
  *  - Switches only when the routed model exists and has credentials.
  *
+ * Explicit switch directives: a prompt like "switch to X now" is detected by an extra
+ * classifier question (model_switch) and resolved against the catalog by name; it then
+ * confirms + switches immediately. Any explicit switch pins the model — auto routing is
+ * suppressed until /model-routing unpin, another explicit switch request, or a manual
+ * /model switch. (A deferred/armed "switch after this run" variant was tried and removed:
+ * mid-run phase boundaries can't be honored reliably, and sending the switch as its own
+ * message at the phase boundary is simpler and always works.)
+ *
  * Config: ~/.pi/agent/settings.json -> { "modelRouter": { ... } }. The legacy
  * "jevRouter" key is migrated automatically (its per-route minConfidence values
- * move into the jev profile's routeConf).
+ * move into the jev profile's routeConf). The enabled flag is session-only and
+ * never persisted (a session toggle survives any other config save).
  *
  * Commands: /model-routing (alias /jev):
  *   on | off                          session-only toggle of auto routing
@@ -67,6 +76,8 @@ interface ClassifierProfile {
   timeoutMs: number;
   /** Global confidence gate for this classifier's scale. */
   minConfidence: number;
+  /** Confidence gate for explicit "switch this session's model" directives (same scale). */
+  dirConf?: number;
   /** Global hysteresis for this classifier. */
   hysteresisTurns: number;
   /** Per-route confidence gate overrides (this classifier's scale). */
@@ -81,6 +92,10 @@ interface Config {
   routes: Record<string, RouteTier>;
   historyTurns: number;
   userMsgClipChars: number;
+  /** When true, pop up a confirmation dialog before each routed model switch. */
+  confirmSwitch: boolean;
+  /** After a declined switch, this many turns must pass before re-prompting for the same task. */
+  cooloffTurns: number;
 }
 
 const DEFAULTS: Config = {
@@ -93,6 +108,7 @@ const DEFAULTS: Config = {
       model: "jev-latest",
       timeoutMs: 1500,
       minConfidence: 0.98,
+      dirConf: 0.95,
       hysteresisTurns: 2,
       routeConf: { chat: 0.98, coding: 0.95, testing: 0.95, review: 0.98, debugging: 0.9, design: 0.85 },
     },
@@ -105,6 +121,7 @@ const DEFAULTS: Config = {
       model: "kev-latest",
       timeoutMs: 500,
       minConfidence: 0.3,
+      dirConf: 0.5,
       hysteresisTurns: 2,
     },
   },
@@ -118,6 +135,8 @@ const DEFAULTS: Config = {
   },
   historyTurns: 10,
   userMsgClipChars: 200,
+  confirmSwitch: false,
+  cooloffTurns: 5,
 };
 
 function isLocalBaseUrl(url: string): boolean {
@@ -138,6 +157,9 @@ function loadConfig(): Config {
       cfg.classifier = user.classifier ?? cfg.classifier;
       cfg.historyTurns = user.historyTurns ?? cfg.historyTurns;
       cfg.userMsgClipChars = user.userMsgClipChars ?? cfg.userMsgClipChars;
+      if (typeof user.confirmSwitch === "boolean") cfg.confirmSwitch = user.confirmSwitch;
+      if (typeof user.cooloffTurns === "number" && Number.isInteger(user.cooloffTurns) && user.cooloffTurns >= 0)
+        cfg.cooloffTurns = user.cooloffTurns;
       for (const [name, p] of Object.entries(user.classifiers ?? {})) {
         const existing = cfg.classifiers[name] ?? {} as ClassifierProfile;
         cfg.classifiers[name] = { ...existing, ...(p as object) } as ClassifierProfile;
@@ -176,14 +198,17 @@ function saveConfig(cfg: Config): string | null {
   try {
     const path = join(homedir(), ".pi", "agent", "settings.json");
     const raw = JSON.parse(readFileSync(path, "utf8"));
+    // NOTE: `enabled` is deliberately NOT persisted — the on/off toggle is session-only,
+    // so a session toggle followed by any other config save must not freeze it into settings.json.
     raw.modelRouter = {
       ...(raw.modelRouter ?? {}),
-      enabled: cfg.enabled,
       classifier: cfg.classifier,
       classifiers: cfg.classifiers,
       routes: cfg.routes,
       historyTurns: cfg.historyTurns,
       userMsgClipChars: cfg.userMsgClipChars,
+      confirmSwitch: cfg.confirmSwitch,
+      cooloffTurns: cfg.cooloffTurns,
     };
     writeFileSync(path, JSON.stringify(raw, null, 2) + "\n");
     return null;
@@ -261,9 +286,9 @@ function textOf(content: unknown): string {
 function buildDigest(ctx: ExtensionContext, prompt: string, cfg: Config): StateDigest {
   const userMsgs: string[] = [];
   const actions: string[] = [];
-  const tools: string[] = [];
+  const tools = new Set<string>();
   const files = new Set<string>();
-  let errors = false;
+  let lastTurnErrors = false;
 
   let entries: any[];
   try {
@@ -272,47 +297,51 @@ function buildDigest(ctx: ExtensionContext, prompt: string, cfg: Config): StateD
     entries = ctx.sessionManager.getEntries();
   }
 
-  for (const e of entries) {
-    if (e.type !== "message") continue;
-    const m = e.message;
-    if (!m) continue;
+  const messages = entries
+    .filter((e: any) => e.type === "message" && e.message)
+    .map((e: any) => e.message);
+  // "Last turn" = everything after the most recent user message (the prompt being
+  // classified is not yet in the branch when this runs).
+  const lastUserIdx = messages.findLastIndex((m: any) => m.role === "user");
+
+  messages.forEach((m: any, i: number) => {
+    const inLastTurn = i > lastUserIdx;
     if (m.role === "user") {
       userMsgs.push(clip(textOf(m.content), cfg.userMsgClipChars));
     } else if (m.role === "assistant") {
       for (const c of Array.isArray(m.content) ? m.content : []) {
-        if (c?.type === "toolCall") {
-          tools.push(c.name ?? c.toolName ?? "?");
-          // Extract file-ish arguments for edit/read/write-style tools
-          const inp = c.input ?? c.arguments ?? {};
-          for (const key of ["path", "file_path", "file"]) {
-            if (typeof inp?.[key] === "string") files.add(inp[key]);
-          }
-          if (typeof inp?.command === "string" && inp.command.length < 120) {
-            tools.push(`bash(${clip(inp.command, 60)})`);
-          }
+        if (c?.type !== "toolCall") continue;
+        const name = c.name ?? c.toolName ?? "?";
+        // Extract file-ish arguments for edit/read/write-style tools
+        const inp = c.input ?? c.arguments ?? {};
+        if (inLastTurn) tools.add(name);
+        actions.push(clip(`${name} ${JSON.stringify(inp)}`, 80));
+        for (const key of ["path", "file_path", "file"]) {
+          if (typeof inp?.[key] === "string") files.add(inp[key]);
+        }
+        if (typeof inp?.command === "string" && inp.command.length < 120) {
+          if (inLastTurn) tools.add(`bash(${clip(inp.command, 60)})`);
+          actions.push(clip(`bash ${inp.command}`, 80));
         }
       }
     } else if (m.role === "toolResult") {
-      if (m.isError) errors = true;
+      if (m.isError) {
+        if (inLastTurn) lastTurnErrors = true;
+        actions.push("tool error");
+      }
     }
-  }
-
-  // Compress assistant actions into per-turn skeletons (last N turns)
-  const actionsCompressed = actions.length
-    ? [`last turns used tools: ${[...new Set(tools)].slice(0, 12).join(", ")}`]
-    : [];
+  });
 
   const recent = userMsgs.slice(-cfg.historyTurns);
-  const turn = recent.length;
 
   return {
-    turn,
+    turn: recent.length,
     recent_user_messages: recent,
-    recent_assistant_actions: actionsCompressed,
+    recent_assistant_actions: actions.slice(-12),
     activity: {
       tools_last_turn: [...new Set(tools)].slice(0, 8),
       files_touched: [...files].slice(0, 8),
-      errors_last_turn: errors,
+      errors_last_turn: lastTurnErrors,
     },
     current_prompt: clip(prompt, 1000),
   };
@@ -354,7 +383,19 @@ const QUESTIONS = {
     instructions:
       "Does the current prompt plausibly request a destructive or risky operation?",
   },
+  model_switch: {
+    type: "choice",
+    instructions:
+      "Does the current prompt explicitly instruct that THIS agent session should switch its own active model now? " +
+      "Merely mentioning a model for another purpose (e.g. telling subagents which model to use, comparing models, or asking to switch later) is NOT a switch request.",
+    criteria: {
+      none: "No instruction to change this session's active model",
+      switch_now: "Explicitly asks this session to switch its own model immediately",
+    },
+  },
 } as const;
+
+const SWITCH_CHOICES = new Set(["none", "switch_now"]);
 
 interface ClassifyResult {
   task: string;
@@ -362,6 +403,10 @@ interface ClassifyResult {
   complexity: number;
   risky: boolean;
   confidence: number;
+  /** Answer to the model_switch question: "none" | "switch_now". */
+  switchReq: string;
+  /** Confidence of the model_switch answer (active classifier's scale). */
+  switchConf: number;
 }
 
 async function classify(
@@ -400,6 +445,16 @@ async function classify(
     complexity: typeof answers?.complexity?.score === "number" ? answers.complexity.score : 0,
     risky: typeof answers?.risky?.noul === "number" ? answers.risky.noul >= 0.5 : false,
     confidence: typeof task.confidence === "number" ? task.confidence : 0,
+    switchReq:
+      answers?.model_switch?.type === "choice" &&
+      typeof answers.model_switch.choice === "string" &&
+      SWITCH_CHOICES.has(answers.model_switch.choice)
+        ? answers.model_switch.choice
+        : "none",
+    switchConf:
+      answers?.model_switch?.type === "choice" && typeof answers.model_switch.confidence === "number"
+        ? answers.model_switch.confidence
+        : 0,
   };
 }
 
@@ -413,14 +468,92 @@ export default function activate(pi: ExtensionAPI) {
   let lastClassification: (StateDigest & { result: ClassifyResult }) | null = null;
   let pendingType: string | null = null; // hysteresis memory
   let lastStatus = "idle";
+  /** Cooloff after a declined switch: task type + turns remaining before we re-prompt. */
+  let declinedTask: string | null = null;
+  let cooloffRemaining = 0;
+  /** Model the user explicitly pinned this session to; suppresses auto routing until released. */
+  let pinnedModel: string | null = null;
+
+  const PIN_ENTRY = "pi.model-router.pin";
 
   function setStatus(ctx: ExtensionContext, text: string) {
     lastStatus = text;
     ctx.ui.setStatus("routing", text);
   }
 
+  function setPin(ctx: ExtensionContext, modelId: string) {
+    pinnedModel = modelId;
+    pendingType = null;
+    try {
+      pi.appendEntry(PIN_ENTRY, { modelId }); // best-effort persistence across restarts
+    } catch {
+      /* pin stays in memory */
+    }
+  }
+
+  function disableRouting(ctx: ExtensionContext, why: string) {
+    cfg.enabled = false;
+    pendingType = null;
+    setStatus(ctx, `disabled (${why})`);
+    ctx.ui.notify(`model-routing off — ${why}; re-enable with /model-routing on`, "info");
+  }
+
+  /** Shared switch-confirmation dialog. "keep" on dismissal or when there is no UI. */
+  async function confirmSwitchDialog(
+    ctx: ExtensionContext,
+    currentId: string,
+    targetId: string,
+    why: string,
+  ): Promise<"switch" | "keep" | "disable"> {
+    if (!ctx.hasUI) return "keep";
+    const pick = await ctx.ui.select(
+      `🔀 Model router wants to switch (${why})\n  ${currentId} → ${targetId}\n\nSwitch models?`,
+      [
+        `Switch to ${targetId}`,
+        `Keep ${currentId} (this turn)`,
+        `Keep ${currentId} and disable routing`,
+      ],
+    );
+    if (pick === undefined) return "keep"; // dismissed (escape)
+    if (pick.startsWith("Switch")) return "switch";
+    if (pick.includes("disable routing")) return "disable";
+    return "keep";
+  }
+
+  /**
+   * Resolve a model named in the prompt against the catalog. The classifier decides *whether*
+   * the user is requesting a switch; this decides *which* model. Returns the full
+   * "provider/modelId", or null + reason when nothing/ambiguous.
+   */
+  function resolveTargetModel(prompt: string, ctx: ExtensionContext): { id: string | null; reason?: string } {
+    const hay = prompt.toLowerCase();
+    const candidates: { token: string; full: string }[] = [];
+    try {
+      for (const m of ctx.modelRegistry.getAvailable()) {
+        const full = `${m.provider}/${m.id}`;
+        const tokens = new Set([full.toLowerCase(), m.id.toLowerCase()]);
+        if (m.name) tokens.add(m.name.toLowerCase());
+        for (const t of tokens) {
+          if (t.length >= 4 && hay.includes(t)) candidates.push({ token: t, full });
+        }
+      }
+    } catch {
+      return { id: null, reason: "model catalog unavailable" };
+    }
+    if (!candidates.length) return { id: null, reason: "no catalog model named in the prompt" };
+    // Drop candidates whose token is a substring of another match (e.g. "glm-5.3" ⊂ "glm-5.3-flash").
+    const tokens = candidates.map((c) => c.token);
+    const maximal = candidates.filter((c) => !tokens.some((t) => t !== c.token && t.includes(c.token)));
+    const ids = new Set(maximal.map((c) => c.full));
+    if (ids.size > 1) return { id: null, reason: `ambiguous model reference (${[...ids].join(", ")})` };
+    return { id: maximal[0].full };
+  }
+
   pi.on("before_agent_start", async (event, ctx) => {
     if (!cfg.enabled) return;
+    // Cooloff ticks once per user turn, regardless of how classification goes.
+    const coolingThisTurn = cooloffRemaining > 0;
+    if (coolingThisTurn) cooloffRemaining--;
     const profile = activeProfile(cfg);
     const needsKey = !isLocalBaseUrl(profile.baseUrl) && profile.apiKeyEnv;
     if (needsKey && !process.env[profile.apiKeyEnv!]) {
@@ -451,6 +584,59 @@ export default function activate(pi: ExtensionAPI) {
 
     const current = ctx.model;
     const currentId = current ? `${current.provider}/${current.id}` : "?";
+
+    // --- explicit directives: the user asked THIS session to switch its own model ---
+    const dirNeedConf = profile.dirConf ?? profile.minConfidence;
+    if (result.switchReq !== "none" && result.switchConf >= dirNeedConf) {
+      const resolved = resolveTargetModel(event.prompt, ctx);
+      if (!resolved.id) {
+        setStatus(
+          ctx,
+          `switch request (${result.switchReq}, conf ${result.switchConf.toFixed(2)} ≥ ${dirNeedConf}) but ${resolved.reason} — routing normally`,
+        );
+      } else if (resolved.id === currentId) {
+        setStatus(ctx, `switch request but already on ${currentId}`);
+      } else {
+        const [dp, ...drest] = resolved.id.split("/");
+        const dmodel = ctx.modelRegistry.find(dp, drest.join("/"));
+        if (!dmodel) {
+          setStatus(ctx, `switch request target ${resolved.id} not in catalog — routing normally`);
+        } else {
+          // ALWAYS confirmed — the classifier is interpreting the user's words, so the
+          // gate belongs exactly here, regardless of confirmSwitch.
+          const decision = await confirmSwitchDialog(
+            ctx,
+            currentId,
+            resolved.id,
+            `explicit request, conf ${result.switchConf.toFixed(2)} ≥ ${dirNeedConf}`,
+          );
+          if (decision === "switch") {
+            suppressManualSelectOnce = true;
+            const ok = await pi.setModel(dmodel);
+            suppressManualSelectOnce = false;
+            if (ok) {
+              setPin(ctx, resolved.id);
+              setStatus(ctx, `switched to ${resolved.id} (explicit request — pinned, auto routing suppressed)`);
+            } else {
+              setStatus(ctx, `no credentials for ${resolved.id} — kept ${currentId}`);
+            }
+          } else if (decision === "disable") {
+            disableRouting(ctx, `declined explicit switch to ${resolved.id}`);
+          } else {
+            setStatus(ctx, `declined explicit switch to ${resolved.id} — kept ${currentId}`);
+          }
+          return;
+        }
+      }
+    }
+
+    // --- pin: an explicitly chosen model overrides auto routing until released ---
+    if (pinnedModel) {
+      pendingType = null;
+      setStatus(ctx, `pinned to ${pinnedModel} — auto routing suppressed (/model-routing unpin to release)`);
+      return;
+    }
+
     const tier = cfg.routes[result.task];
     const targetId = tier?.model;
 
@@ -489,6 +675,35 @@ export default function activate(pi: ExtensionAPI) {
       setStatus(ctx, `route "${targetId}" not found — kept ${currentId}`);
       return;
     }
+    // Cooloff: don't re-prompt for the same task the user just declined.
+    if (result.task === declinedTask && coolingThisTurn) {
+      setStatus(
+        ctx,
+        `${result.task} → ${targetId} — kept ${currentId} [declined; ${cooloffRemaining === 0 ? "cooloff ends next turn" : `cooloff ${cooloffRemaining} more turn${cooloffRemaining === 1 ? "" : "s"}`}]`,
+      );
+      return;
+    }
+    declinedTask = null;
+
+    // Optional confirmation popup (stolen from injection-guard's review dialog).
+    if (cfg.confirmSwitch) {
+      const decision = await confirmSwitchDialog(
+        ctx,
+        currentId,
+        targetId,
+        `${result.task}, conf ${result.confidence.toFixed(2)} ≥ ${needConf}`,
+      );
+      if (decision === "disable") {
+        disableRouting(ctx, `declined switch to ${targetId}`); // session-only, never persisted
+        return;
+      }
+      if (decision === "keep") {
+        declinedTask = result.task;
+        cooloffRemaining = cfg.cooloffTurns;
+        setStatus(ctx, `declined ${result.task} → ${targetId} — kept ${currentId} [cooloff ${cfg.cooloffTurns} turns]`);
+        return;
+      }
+    }
     suppressManualSelectOnce = true; // our own switch must not disable routing
     const ok = await pi.setModel(model);
     suppressManualSelectOnce = false; // handler ran during the await; clear defensively anyway
@@ -518,12 +733,27 @@ export default function activate(pi: ExtensionAPI) {
     if (event.source === "restore") return;
     if (!cfg.enabled) return;
     cfg.enabled = false;
+    pinnedModel = null; // a manual pick supersedes any pin
     pendingType = null; // reset hysteresis across the boundary
     setStatus(ctx, "disabled (manual model switch)");
     ctx.ui.notify(
       `model-routing off — you picked ${event.model.provider}/${event.model.id} manually; re-enable with /model-routing on`,
       "info",
     );
+  });
+
+  // Restore pin persisted on the session branch (survives restarts).
+  pi.on("session_start", async (_event, ctx) => {
+    try {
+      const branch = ctx.sessionManager.getBranch() as any[];
+      for (const e of branch) {
+        if (e?.type !== "custom") continue;
+        if (e.customType === PIN_ENTRY && typeof e.data?.modelId === "string") pinnedModel = e.data.modelId;
+      }
+      if (pinnedModel) setStatus(ctx, `restored pin: ${pinnedModel} (auto routing suppressed)`);
+    } catch {
+      /* best-effort */
+    }
   });
 
   const routingCommand = async (args: string, ctx: ExtensionContext) => {
@@ -582,6 +812,7 @@ export default function activate(pi: ExtensionAPI) {
             model: kv.model ?? "default",
             timeoutMs: Number(kv.timeout) || 500,
             minConfidence: kv.conf !== undefined && !Number.isNaN(Number(kv.conf)) ? Number(kv.conf) : 0.5,
+            dirConf: kv.dirconf !== undefined && !Number.isNaN(Number(kv.dirconf)) ? Number(kv.dirconf) : undefined,
             hysteresisTurns: Number(kv.streak) || 2,
           };
           pendingType = null;
@@ -619,6 +850,68 @@ export default function activate(pi: ExtensionAPI) {
         } else {
           info(`already using ${name}`);
         }
+        return;
+      }
+
+      // --- pin / unpin: explicit model pin overrides auto routing ---
+      if (arg0 === "pin" || arg0 === "unpin") {
+        if (arg0 === "unpin") {
+          if (!pinnedModel) {
+            info("no pin to release");
+            return;
+          }
+          pinnedModel = null;
+          setStatus(ctx, "pin released — auto routing active");
+          info("pin released — auto routing active again");
+          return;
+        }
+        const target = tokens[1];
+        if (!target) {
+          info(pinnedModel ? `pinned to ${pinnedModel}` : "no pin (auto routing active)");
+          return;
+        }
+        const [p2, ...r2] = target.split("/");
+        const m = ctx.modelRegistry.find(p2, r2.join("/"));
+        if (!m) {
+          err(`no model "${target}" in the catalog`);
+          return;
+        }
+        const full = `${m.provider}/${m.id}`;
+        setPin(ctx, full);
+        setStatus(ctx, `pinned to ${full}`);
+        info(`pinned to ${full} — auto routing suppressed until /model-routing unpin or an explicit switch request in a prompt`);
+        return;
+      }
+
+      // --- confirm on|off: pop up before routed switches ---
+      if (arg0 === "confirm") {
+        const sub = tokens[1]?.toLowerCase();
+        if (sub !== "on" && sub !== "off") {
+          err(`usage: /model-routing confirm on|off  (currently ${cfg.confirmSwitch ? "on" : "off"})`);
+          return;
+        }
+        cfg.confirmSwitch = sub === "on";
+        const e = saveConfig(cfg);
+        setStatus(ctx, `confirm switch: ${sub} (saved)`);
+        info(
+          `switch confirmation ${cfg.confirmSwitch ? "ON" : "OFF"} — routed switches will ${cfg.confirmSwitch ? "pop up a confirm dialog" : "happen silently"}${e ? ` — FAILED to save: ${e}` : " — saved to settings.json"}`,
+        );
+        return;
+      }
+
+      // --- cooloff: turns to wait after a declined switch before re-prompting ---
+      if (arg0 === "cooloff") {
+        const v = Number(tokens[1]);
+        if (!tokens[1] || Number.isNaN(v) || !(Number.isInteger(v) && v >= 0)) {
+          err(`usage: /model-routing cooloff <turns≥0>  (currently ${cfg.cooloffTurns})`);
+          return;
+        }
+        cfg.cooloffTurns = v;
+        const e = saveConfig(cfg);
+        setStatus(ctx, `cooloff = ${v} turns (saved)`);
+        info(
+          `switch-confirm cooloff = ${v} turn${v === 1 ? "" : "s"} — after you decline a switch, the router waits this long before re-prompting for the same task${e ? ` — FAILED to save: ${e}` : " — saved to settings.json"}`,
+        );
         return;
       }
 
@@ -759,6 +1052,26 @@ export default function activate(pi: ExtensionAPI) {
             `                               task name\n` +
             `  /model-routing route set <name> key=value ... — update an existing route\n` +
             `  /model-routing route remove <name> — delete route and its taxonomy entry\n\n` +
+            `PIN & EXPLICIT SWITCH DIRECTIVES\n` +
+            `  /model-routing pin [provider/model]  pin the session to a model — suppresses auto
+` +
+            `                               routing until /model-routing unpin or an explicit
+` +
+            `                               switch request in a prompt (e.g. "switch to glm now")
+` +
+            `  /model-routing unpin         release the pin
+` +
+            `                               (prompts like "switch to X now" switch immediately,
+` +
+            `                               user-confirmed; gated per classifier by dirConf)
+
+` +
+            `SWITCH CONFIRMATION\n` +
+            `  /model-routing confirm on|off  pop up a confirm dialog before each routed\n` +
+            `                               model switch (declining keeps the current model;\n` +
+            `                               the dialog also offers a disable-routing escape)\n` +
+            `  /model-routing cooloff <n>    after a declined switch, don't re-prompt for the\n` +
+            `                               same task for this many turns (default 5)\n\n` +
             `OTHER\n` +
             `  /model-routing panel|<no args> — status panel: classifiers, routes, taxonomy,\n` +
             `                               last classification battery (probabilities), status\n` +
@@ -809,7 +1122,7 @@ export default function activate(pi: ExtensionAPI) {
       }
 
       ctx.ui.notify(
-        `model-routing ${cfg.enabled ? "enabled" : "DISABLED (session toggle)"}  classifier: ${cfg.classifier}  (/model-routing help for details)\n\n` +
+        `model-routing ${cfg.enabled ? "enabled" : "DISABLED (session toggle)"}  classifier: ${cfg.classifier}  pin: ${pinnedModel ?? "none"}  (/model-routing help for details)\n\n` +
           `classifiers:\n${profiles}\n\n` +
           `routes (thresholds shown on "${cfg.classifier}" scale):\n${routes}\n\n` +
           `task taxonomy:\n${taxonomy}\n\n` +

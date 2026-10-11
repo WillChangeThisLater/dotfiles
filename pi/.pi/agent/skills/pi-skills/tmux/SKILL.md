@@ -50,6 +50,24 @@ Sticky-target rule:
 - After init, all tmux interactions for that assigned system must use the active target.
 - If a command would use a different target, stop and ask for confirmation first.
 
+## "Pane X" always means the CURRENT window
+
+When the user says "use pane X" or "run in pane X" without specifying a window,
+that pane is **always in the window you are currently running in**, e.g. if
+you are in session 0 window 4, then "pane 1" means `0:4.1`, never `0:0.1`.
+Even if the user used a pane in a different window earlier in the session, a
+bare "pane X" reference defaults to your current window. If there is ambiguity,
+ask, but the default is the current window.  (Incident: sent subagent test
+commands to 0:0.1 when the user was watching 0:4.1.)
+
+## "Create a new pane" convention
+When the user says "create a new pane" without specifying where, it is **implied the pane
+is created in the existing window the agent is running in** (i.e. split the current window),
+unless the user states otherwise. Deviating from this (e.g. creating a new window for
+stable pane IDs or to avoid resizing the user's pane) is acceptable, but you must flag the
+deviation at the time and offer to undo it — don't silently do something different from
+what was asked.
+
 ## Targeting safety (mandatory — real incidents have damaged the human's sessions)
 
 Never send keystrokes to a target you did not **verify in the same breath**. Both

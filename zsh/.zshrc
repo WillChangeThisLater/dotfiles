@@ -485,3 +485,10 @@ export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH
 # Note: this model is quantized (q5_1) — known trade off: slightly worse accuracy
 # on rare/unusual words in exchange for the speed.
 export PI_DICTATION_BACKEND="whisper-cli -m ~/.pi/agent/models/ggml-tiny.en-q5_1.bin -nt {file}"
+
+# bork: hostile AI bug-hunting tool
+bork() { "$HOME/.local/bin/bork" "$@"; }
+
+# REA (reverse-engineer-anything) — Ghidra backend
+export GHIDRA_INSTALL_DIR="$HOME/tools/ghidra"
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64

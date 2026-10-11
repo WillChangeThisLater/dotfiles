@@ -218,3 +218,12 @@ browser click "button[type='submit']" --tab <tabId> --port 9222 --timeout 5000
 browser screenshot /tmp/after_submit.png --tab <tabId> --port 9222
 # read /tmp/after_submit.png and confirm expected UI state before next action
 ```
+
+## When you need the human's eyes or hands
+
+If a step needs the human to look at the browser or click something themselves,
+don't describe the spot in prose. If the `xarrow` skill is installed
+(`~/.pi/agent/skills/xarrow/SKILL.md`), draw a click-through
+arrow at the element's position — on the browser's X display — and give the
+human the VNC command for that display. See `PARTNERS.md` in this directory
+for partner skills (x11 environments, xarrow) and how they couple.

@@ -36,6 +36,38 @@ if grep -q '^CHROME_PORT=' "$SF"; then
     exit 4
 fi
 
+# Take the x11_env claim lock for the port-scan/launch/health-check/state-append
+# section so two concurrent launches can't race onto the same CDP port.
+LOCK_DIR="/tmp/x11-env.lock"; LOCK_STALE_SECS=600
+chrome_lock() {
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        echo "$$-$(date +%s)" > "$LOCK_DIR/owner"
+        return 0
+    fi
+    return 1
+}
+lock_age() {
+    local now mtime
+    now=$(date +%s)
+    mtime=$(stat -c %Y "$LOCK_DIR/owner" 2>/dev/null || echo "$now")
+    echo $(( now - mtime ))
+}
+# wait up to 30s, steal stale lock after 600s (same policy as x11_env.sh)
+i=0
+until chrome_lock; do
+    age=$(lock_age)
+    if (( age > LOCK_STALE_SECS )); then
+        echo "chrome: stale lock (${age}s old) — stealing it." >&2
+        rm -rf "$LOCK_DIR"; chrome_lock || { echo "ERROR: could not steal stale lock" >&2; exit 2; }
+    elif (( i >= 30 )); then
+        echo "ERROR: could not acquire x11_env lock after 30s (held by $(cat "$LOCK_DIR/owner" 2>/dev/null))." >&2
+        exit 2
+    else
+        sleep 1; i=$(( i + 1 ))
+    fi
+done
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
 # allocate CDP port
 port=9222
 while (( port <= 9299 )); do
@@ -60,8 +92,8 @@ fi
 
 # launch in a dedicated window of the app's environment
 pane=$("$ENV" run "$agent" "$app" \
-    "google-chrome --remote-debugging-port=$port --user-data-dir=$profile --no-sandbox --disable-gpu") \
-    || { echo "ERROR: could not create chrome pane" >&2; exit 3; }
+    "google-chrome --remote-debugging-port=$port --user-data-dir=$profile --no-sandbox --disable-gpu --password-store=basic") \
+    || { rm -rf "$LOCK_DIR"; trap - EXIT; echo "ERROR: could not create chrome pane" >&2; exit 3; }
 
 # health check: CDP must answer /json/version
 ok=0
@@ -72,6 +104,7 @@ done
 if (( ! ok )); then
     echo "ERROR: chrome did not answer CDP on port $port. Pane output:" >&2
     tmux capture-pane -t "$pane" -p 2>/dev/null | tail -20 >&2
+    rm -rf "$LOCK_DIR"; trap - EXIT
     exit 3
 fi
 
@@ -84,6 +117,8 @@ fi
         echo "PROFILE_MASTER=$HOME/.agent-chrome-profile-master"
     fi
 } >> "$SF"
+
+rm -rf "$LOCK_DIR"; trap - EXIT
 
 echo "chrome: OK for $agent/$app — CDP http://localhost:$port"
 echo "automate: browser CLI with --port $port, or raw CDP; DOM-first, xdotool only when pixels are required"
