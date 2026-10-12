@@ -417,7 +417,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 
 # Added by Windsurf
-export PATH="/Users/paul.wendt/.codeium/windsurf/bin:$PATH"
+# export PATH="/Users/paul.wendt/.codeium/windsurf/bin:$PATH"  # mac-only path, dead on linux
 
 # other things
 alias fs="osascript /Users/paul.wendt/personal-repos/apple-scripts/firefox-screenshot.applescript"
