@@ -486,8 +486,8 @@ export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH
 # on rare/unusual words in exchange for the speed.
 export PI_DICTATION_BACKEND="whisper-cli -m ~/.pi/agent/models/ggml-tiny.en-q5_1.bin -nt {file}"
 
-# bork: hostile AI bug-hunting tool
-bork() { "$HOME/.local/bin/bork" "$@"; }
+# bork: hostile AI bug-hunting tool — now nix-profile managed (nix-config)
+# bork() { "$HOME/.local/bin/bork" "$@"; }
 
 # REA (reverse-engineer-anything) — Ghidra backend
 export GHIDRA_INSTALL_DIR="$HOME/tools/ghidra"
