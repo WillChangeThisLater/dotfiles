@@ -1,0 +1,552 @@
+/**
+ * jev-router.ts — auto model routing for pi using Jev (TypeSafe "System One" classifier).
+ *
+ * On every user submit (before_agent_start), builds a compact state digest of the
+ * recent conversation, sends one parallel jev question battery (task-type choice +
+ * complexity score + risky-operation noul), and — only when jev is *very* confident
+ * (default 98%) and the classification has persisted (default 2 turns) — switches
+ * the active model via pi.setModel().
+ *
+ * Design invariants:
+ *  - One classification per turn, resolved before dispatch or dropped entirely
+ *    (late answers after the timeout are discarded, never applied).
+ *  - All failure modes (timeout, network, auth, malformed) fail open: keep the
+ *    current model, show a brief status note, never block or error the turn.
+ *  - Switches only when the routed model exists and has credentials.
+ *
+ * Config: ~/.pi/agent/settings.json -> { "jevRouter": { ... } } (see DEFAULTS).
+ * Env: JEV_API_KEY (required), JEV_BASE_URL (optional override), OPENROUTER_API_KEY.
+ *
+ * Docs/state: /jev command shows the last full classification battery.
+ */
+
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+interface RouteTier {
+  model: string; // "provider/modelId" (OpenRouter-style id used by pi)
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  /** Override global minConfidence for this route (calibrated jev confidence, 0..1) */
+  minConfidence?: number;
+  /** Override global hysteresis (consecutive agreeing turns) for this route */
+  hysteresisTurns?: number;
+}
+
+const DEFAULTS = {
+  enabled: true,
+  timeoutMs: 1500,
+  minConfidence: 0.98,
+  hysteresisTurns: 2,
+  historyTurns: 10,
+  userMsgClipChars: 200,
+  routes: {
+    chat: { model: "openrouter/z-ai/glm-5.3-flash", thinkingLevel: "low", minConfidence: 0.98, hysteresisTurns: 2 },
+    coding: { model: "openrouter/deepseek/deepseek-v4.1-flash", thinkingLevel: "low", minConfidence: 0.95, hysteresisTurns: 2 },
+    testing: { model: "openrouter/deepseek/deepseek-v4.1-flash", thinkingLevel: "low", minConfidence: 0.95, hysteresisTurns: 2 },
+    review: { model: "openrouter/openai/gpt-5.6-luna", thinkingLevel: "medium", minConfidence: 0.98, hysteresisTurns: 2 },
+    debugging: { model: "openrouter/z-ai/glm-5.3", thinkingLevel: "medium", minConfidence: 0.9, hysteresisTurns: 1 },
+    design: { model: "openrouter/anthropic/claude-opus-5.5", thinkingLevel: "high", minConfidence: 0.85, hysteresisTurns: 1 },
+  } as Record<string, RouteTier>,
+};
+
+type Config = typeof DEFAULTS;
+
+function loadConfig(): Config {
+  const defaults = structuredClone(DEFAULTS);
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(homedir(), ".pi", "agent", "settings.json"), "utf8"),
+    );
+    const user = raw?.jevRouter ?? {};
+    return {
+      ...defaults,
+      ...user,
+      routes: { ...defaults.routes, ...(user.routes ?? {}) },
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+/** Persist the current config's meaningful fields to settings.json (preserving other keys). */
+function saveConfig(cfg: Config): string | null {
+  try {
+    const path = join(homedir(), ".pi", "agent", "settings.json");
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    raw.jevRouter = {
+      ...(raw.jevRouter ?? {}),
+      enabled: cfg.enabled,
+      minConfidence: cfg.minConfidence,
+      hysteresisTurns: cfg.hysteresisTurns,
+      routes: cfg.routes,
+    };
+    writeFileSync(path, JSON.stringify(raw, null, 2) + "\n");
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
+/** Parse "key=value" tokens into a record. Values may be quoted. */
+function parseKv(tokens: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const t of tokens) {
+    const eq = t.indexOf("=");
+    if (eq <= 0) continue;
+    out[t.slice(0, eq).toLowerCase()] = t.slice(eq + 1).replace(/^"|"$/g, "");
+  }
+  return out;
+}
+
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/** Validate and normalize a route tier from parsed key/value tokens. Returns [error, patch]. */
+function routePatch(kv: Record<string, string>): [string | null, Partial<RouteTier> & { criteria?: string }] {
+  const patch: Partial<RouteTier> & { criteria?: string } = {};
+  if (kv.model) patch.model = kv.model;
+  if (kv.think !== undefined) {
+    if (!THINKING_LEVELS.has(kv.think)) return [`think must be one of: ${[...THINKING_LEVELS].join(" ")}`, patch];
+    patch.thinkingLevel = kv.think as RouteTier["thinkingLevel"];
+  }
+  if (kv.conf !== undefined) {
+    const v = Number(kv.conf);
+    if (!(v >= 0 && v <= 1)) return ["conf must be between 0 and 1", patch];
+    patch.minConfidence = v;
+  }
+  if (kv.streak !== undefined) {
+    const v = Number(kv.streak);
+    if (!(Number.isInteger(v) && v >= 1)) return ["streak must be an integer ≥ 1", patch];
+    patch.hysteresisTurns = v;
+  }
+  if (kv.criteria !== undefined) patch.criteria = kv.criteria;
+  return [null, patch];
+}
+
+// ---------------------------------------------------------------------------
+// State digest — compact summary of recent conversation for jev
+// ---------------------------------------------------------------------------
+
+interface StateDigest {
+  turn: number;
+  recent_user_messages: string[];
+  recent_assistant_actions: string[];
+  activity: {
+    tools_last_turn: string[];
+    files_touched: string[];
+    errors_last_turn: boolean;
+  };
+  current_prompt: string;
+}
+
+function clip(s: string, n: number): string {
+  const flat = s.replace(/\s+/g, " ").trim();
+  return flat.length > n ? flat.slice(0, n) + "…" : flat;
+}
+
+function textOf(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((c: any) => (c?.type === "text" ? c.text : c?.type === "image" ? "[image]" : ""))
+      .join(" ");
+  }
+  return "";
+}
+
+function buildDigest(ctx: ExtensionContext, prompt: string, cfg: Config): StateDigest {
+  const userMsgs: string[] = [];
+  const actions: string[] = [];
+  const tools: string[] = [];
+  const files = new Set<string>();
+  let errors = false;
+
+  let entries: any[];
+  try {
+    entries = ctx.sessionManager.getBranch();
+  } catch {
+    entries = ctx.sessionManager.getEntries();
+  }
+
+  for (const e of entries) {
+    if (e.type !== "message") continue;
+    const m = e.message;
+    if (!m) continue;
+    if (m.role === "user") {
+      userMsgs.push(clip(textOf(m.content), cfg.userMsgClipChars));
+    } else if (m.role === "assistant") {
+      for (const c of Array.isArray(m.content) ? m.content : []) {
+        if (c?.type === "toolCall") {
+          tools.push(c.name ?? c.toolName ?? "?");
+          // Extract file-ish arguments for edit/read/write-style tools
+          const inp = c.input ?? c.arguments ?? {};
+          for (const key of ["path", "file_path", "file"]) {
+            if (typeof inp?.[key] === "string") files.add(inp[key]);
+          }
+          if (typeof inp?.command === "string" && inp.command.length < 120) {
+            tools.push(`bash(${clip(inp.command, 60)})`);
+          }
+        }
+      }
+    } else if (m.role === "toolResult") {
+      if (m.isError) errors = true;
+    }
+  }
+
+  // Compress assistant actions into per-turn skeletons (last N turns)
+  const actionsCompressed = actions.length
+    ? [`last turns used tools: ${[...new Set(tools)].slice(0, 12).join(", ")}`]
+    : [];
+
+  const recent = userMsgs.slice(-cfg.historyTurns);
+  const turn = recent.length;
+
+  return {
+    turn,
+    recent_user_messages: recent,
+    recent_assistant_actions: actionsCompressed,
+    activity: {
+      tools_last_turn: [...new Set(tools)].slice(0, 8),
+      files_touched: [...files].slice(0, 8),
+      errors_last_turn: errors,
+    },
+    current_prompt: clip(prompt, 1000),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Jev client — native TypeSafe API (POST /v1/systemone, per api.typesafe.ai
+// openapi.json; verified live). Endpoint override via JEV_BASE_URL, model via
+// JEV_MODEL (default jev-latest).
+// ---------------------------------------------------------------------------
+
+const JEV_TASK_TYPES = ["chat", "coding", "testing", "review", "debugging", "design"];
+
+const QUESTIONS = {
+  task: {
+    type: "choice",
+    instructions:
+      "Which task type best fits this agent conversation state and current prompt?",
+    criteria: {
+      chat: "Casual conversation, factual question, or follow-up chatter not requiring code changes",
+      coding: "Writing, editing, or refactoring code",
+      testing: "Writing or running tests",
+      review: "Reviewing existing code or recent changes for problems",
+      debugging: "Diagnosing failures, errors, or unexpected behavior",
+      design: "Architecture or high-level design work",
+    } as Record<string, string>, // mutable: /jev route add criteria=... extends the taxonomy at runtime
+  },
+  complexity: {
+    type: "score",
+    instructions: "How cognitively complex is the current request?",
+    criteria: [
+      "trivial chat or lookup",
+      "simple well-scoped change",
+      "moderate multi-step work",
+      "hard debugging or cross-cutting change",
+      "architecture-level design",
+    ],
+  },
+  risky: {
+    type: "noul",
+    instructions:
+      "Does the current prompt plausibly request a destructive or risky operation?",
+  },
+} as const;
+
+interface JevResult {
+  task: string;
+  probs: Record<string, number>;
+  complexity: number;
+  risky: boolean;
+  confidence: number;
+}
+
+async function classify(
+  state: StateDigest,
+  _cfg: Config,
+  signal: AbortSignal,
+): Promise<JevResult | null> {
+  const apiKey = process.env.JEV_API_KEY;
+  if (!apiKey) return null;
+  const base = process.env.JEV_BASE_URL ?? "https://api.typesafe.ai/v1";
+  const model = process.env.JEV_MODEL ?? "jev-latest";
+
+  const res = await fetch(`${base}/systemone`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, state, questions: QUESTIONS }),
+    signal,
+  });
+  if (!res.ok) return null;
+
+  const json: any = await res.json();
+  const answers = json?.answers;
+  const task = answers?.task;
+  const probs: Record<string, number> | undefined = task?.probabilities;
+  if (task?.type !== "choice" || typeof task?.choice !== "string" || !probs) return null;
+
+  return {
+    // API returns a calibrated confidence (0..1) per answer — use theirs directly
+    task: JEV_TASK_TYPES.includes(task.choice) ? task.choice : "chat",
+    probs,
+    complexity: typeof answers?.complexity?.score === "number" ? answers.complexity.score : 0,
+    risky: typeof answers?.risky?.noul === "number" ? answers.risky.noul >= 0.5 : false,
+    confidence: typeof task.confidence === "number" ? task.confidence : 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Extension
+// ---------------------------------------------------------------------------
+
+export default function activate(pi: ExtensionAPI) {
+  const cfg = loadConfig();
+
+  let lastClassification: (StateDigest & { result: NonNullable<Awaited<ReturnType<typeof classify>>> }) | null = null;
+  let pendingType: string | null = null; // hysteresis memory
+  let lastStatus = "idle";
+
+  function setStatus(ctx: ExtensionContext, text: string) {
+    lastStatus = text;
+    ctx.ui.setStatus("jev", text);
+  }
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    if (!cfg.enabled) return;
+    const apiKey = process.env.JEV_API_KEY;
+    if (!apiKey) {
+      setStatus(ctx, "no JEV_API_KEY — routing disabled");
+      return;
+    }
+
+    const state = buildDigest(ctx, event.prompt, cfg);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+
+    let result: Awaited<ReturnType<typeof classify>> = null;
+    try {
+      result = await classify(state, cfg, controller.signal);
+    } catch {
+      result = null; // network/abort/etc.
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!result) {
+      // Fail open, drop late/failed results entirely. Keep current model.
+      setStatus(ctx, `timeout/err — kept ${ctx.model?.id ?? "?"}`);
+      return;
+    }
+
+    lastClassification = { ...state, result };
+
+    const current = ctx.model;
+    const currentId = current ? `${current.provider}/${current.id}` : "?";
+    const tier = cfg.routes[result.task];
+    const targetId = tier?.model;
+
+    if (!targetId) {
+      setStatus(ctx, `no route for "${result.task}" — kept ${currentId}`);
+      return;
+    }
+
+    if (targetId === currentId) {
+      pendingType = result.task;
+      setStatus(ctx, `${result.task} → ${targetId} (already active)`);
+      return;
+    }
+
+    // Switch gate: confidence + hysteresis, per-route overrides over global defaults
+    const needConf = tier.minConfidence ?? cfg.minConfidence;
+    const needStreak = tier.hysteresisTurns ?? cfg.hysteresisTurns;
+    const confident = result.confidence >= needConf;
+    const stable = pendingType === result.task;
+    pendingType = result.task;
+
+    if (!confident || !stable) {
+      setStatus(
+        ctx,
+        `${result.task} (${result.confidence.toFixed(2)}) — kept ${currentId}` +
+          (confident ? ` [needs ${needStreak} turns]` : " [low conf]"),
+      );
+      return;
+    }
+
+    // Resolve target model in the registry; degrade gracefully if unavailable
+    const [provider, ...rest] = targetId.split("/");
+    const model = ctx.modelRegistry.find(provider, rest.join("/"));
+    if (!model) {
+      setStatus(ctx, `route "${targetId}" not found — kept ${currentId}`);
+      return;
+    }
+    const ok = await pi.setModel(model);
+    if (!ok) {
+      setStatus(ctx, `no credentials for ${targetId} — kept ${currentId}`);
+      return;
+    }
+    if (tier.thinkingLevel) {
+      try {
+        pi.setThinkingLevel(tier.thinkingLevel);
+      } catch {
+        /* level clamped/unavailable — non-fatal */
+      }
+    }
+    setStatus(ctx, `${result.task} → ${targetId} (conf ${result.confidence.toFixed(2)} ≥ ${needConf})`);
+  });
+
+  pi.registerCommand("jev", {
+    description: "Show jev-router config, taxonomy, and last classification (/jev on|off toggles routing)",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      // Subcommands: /jev on | /jev off — live toggle, no settings edit or reload needed.
+      const arg = args.trim().toLowerCase();
+      if (arg === "on" || arg === "off") {
+        const enabling = arg === "on";
+        if (cfg.enabled === enabling) {
+          ctx.ui.notify(`jev-router already ${arg}`, "info");
+        } else {
+          cfg.enabled = enabling;
+          pendingType = null; // reset hysteresis across the boundary
+          setStatus(ctx, enabling ? "enabled (manual)" : "disabled (manual)");
+          ctx.ui.notify(`jev-router ${enabling ? "enabled" : "disabled"} — auto model routing ${enabling ? "on" : "off"} for this session`, "info");
+        }
+        return;
+      }
+      // --- route management: /jev route add|set|remove, /jev conf, /jev streak ---
+      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      if (tokens[0] === "conf" || tokens[0] === "streak") {
+        const v = Number(tokens[1]);
+        if (!tokens[1] || Number.isNaN(v)) {
+          ctx.ui.notify(`usage: /jev ${tokens[0]} <${tokens[0] === "conf" ? "0..1" : "integer ≥ 1"}>`, "info");
+          return;
+        }
+        if (tokens[0] === "conf" && !(v >= 0 && v <= 1)) {
+          ctx.ui.notify("conf must be between 0 and 1", "info");
+          return;
+        }
+        if (tokens[0] === "streak" && !(Number.isInteger(v) && v >= 1)) {
+          ctx.ui.notify("streak must be an integer ≥ 1", "info");
+          return;
+        }
+        if (tokens[0] === "conf") cfg.minConfidence = v;
+        else cfg.hysteresisTurns = v;
+        pendingType = null;
+        const err = saveConfig(cfg);
+        setStatus(ctx, `${tokens[0]}=${v} (saved)`);
+        ctx.ui.notify(`jev-router global ${tokens[0]}=${v}${err ? ` — FAILED to save: ${err}` : " — saved to settings.json"}`, err ? "error" : "info");
+        return;
+      }
+      if (tokens[0] === "route") {
+        const sub = tokens[1];
+        if (sub === "add" || sub === "set") {
+          const name = tokens[2]?.toLowerCase();
+          if (!name) {
+            ctx.ui.notify(`usage: /jev route ${sub} <name> ${sub === "add" ? "<provider/model> " : ""}[key=value ...]\nkeys: model, conf (0..1), streak (int ≥ 1), think (${[...THINKING_LEVELS].join("|")})${sub === "add" ? ", criteria (adds to classifier taxonomy)" : ""}`, "info");
+            return;
+          }
+          if (sub === "add") {
+            // Model can be positional (the token right after the name, if it has no "=") or model=...
+            const rest = tokens.slice(3);
+            const positional = rest[0] && !rest[0].includes("=") ? rest[0] : undefined;
+            const [err, patch] = routePatch(parseKv(positional ? rest.slice(1) : rest));
+            if (positional) patch.model = patch.model ?? positional;
+            if (err || !patch.model) {
+              ctx.ui.notify(err ?? "model=<provider/model> is required for route add\nexample: /jev route add research openrouter/x/y conf=0.9 streak=1 criteria='Researching papers and docs'", "error");
+              return;
+            }
+            if (name in cfg.routes) {
+              ctx.ui.notify(`route "${name}" already exists — use /jev route set ${name} ...`, "info");
+              return;
+            }
+            const { criteria, ...tier } = patch as RouteTier & { criteria?: string };
+            cfg.routes[name] = tier as RouteTier;
+            // Adding a criteria string extends the classifier taxonomy so jev can emit this task name.
+            if (criteria) QUESTIONS.task.criteria[name] = criteria;
+          } else {
+            const tier = cfg.routes[name];
+            if (!tier) {
+              ctx.ui.notify(`no route "${name}" (routes: ${Object.keys(cfg.routes).join(", ")})`, "info");
+              return;
+            }
+            const [err, patch] = routePatch(parseKv(tokens.slice(3)));
+            if (err) {
+              ctx.ui.notify(err, "error");
+              return;
+            }
+            const { criteria, ...kv } = patch as RouteTier & { criteria?: string };
+            Object.assign(tier, kv);
+            if (criteria) QUESTIONS.task.criteria[name] = criteria;
+          }
+          pendingType = null;
+          const err2 = saveConfig(cfg);
+          const t = cfg.routes[name];
+          setStatus(ctx, `route ${name} ${sub}d (saved)`);
+          ctx.ui.notify(
+            `jev-router route "${name}" ${sub === "add" ? "added" : "updated"}${err2 ? ` — FAILED to save: ${err2}` : " — saved"}\n  model: ${t.model}${t.thinkingLevel ? ` think:${t.thinkingLevel}` : ""}\n  conf≥${(t.minConfidence ?? cfg.minConfidence).toFixed(2)}  streak≥${t.hysteresisTurns ?? cfg.hysteresisTurns}`,
+            err2 ? "error" : "info",
+          );
+          return;
+        }
+        if (sub === "remove" || sub === "rm") {
+          const name = tokens[2]?.toLowerCase();
+          if (!name || !(name in cfg.routes)) {
+            ctx.ui.notify(`usage: /jev route remove <name> (routes: ${Object.keys(cfg.routes).join(", ")})`, "info");
+            return;
+          }
+          delete cfg.routes[name];
+          delete QUESTIONS.task.criteria[name];
+          pendingType = null;
+          const err = saveConfig(cfg);
+          setStatus(ctx, `route ${name} removed`);
+          ctx.ui.notify(`jev-router route "${name}" removed${err ? ` — FAILED to save: ${err}` : " — saved"}`, err ? "error" : "info");
+          return;
+        }
+        ctx.ui.notify("usage: /jev route add|set|remove — see /jev for the full panel", "info");
+        return;
+      }
+
+      const gmin = cfg.minConfidence.toFixed(2);
+      const routes = Object.entries(cfg.routes)
+        .map(([name, tier]) => {
+          const mc = (tier.minConfidence ?? cfg.minConfidence).toFixed(2);
+          const hy = String(tier.hysteresisTurns ?? cfg.hysteresisTurns);
+          const tl = tier.thinkingLevel ? ` · think:${tier.thinkingLevel}` : "";
+          return `  ${name.padEnd(10)} ${tier.model}${tl}\n${"".padEnd(14)}conf≥${mc}  streak≥${hy}`;
+        })
+        .join("\n");
+      const taxonomy = Object.entries(QUESTIONS.task.criteria)
+        .map(([k, v]) => `  ${k.padEnd(10)} ${v}`)
+        .join("\n");
+
+      let battery = "(no classification yet this session)";
+      if (lastClassification) {
+        const c = lastClassification.result;
+        const probs = Object.entries(c.probs)
+          .sort((a, b) => b[1] - a[1])
+          .map(([k, v]) => `  ${k.padEnd(10)} ${v.toFixed(3)}`)
+          .join("\n");
+        battery =
+          `state.turn=${lastClassification.turn}  state.prompt="${clip(lastClassification.current_prompt, 80)}"\n` +
+          `task: ${c.task} (confidence ${c.confidence.toFixed(3)})\n` +
+          `complexity: ${c.complexity.toFixed(2)}\n` +
+          `risky: ${(c.risky ? 1 : 0)}\n` +
+          `probabilities:\n${probs}`;
+      }
+
+      ctx.ui.notify(
+        `jev-router ${cfg.enabled ? "enabled" : "DISABLED (settings.jevRouter.enabled)"}  ` +
+          `global: timeout=${cfg.timeoutMs}ms conf≥${gmin} streak≥${cfg.hysteresisTurns}\n\n` +
+          `routes (per-route overrides shown):\n${routes}\n\n` +
+          `task taxonomy:\n${taxonomy}\n\n` +
+          `last battery:\n${battery}\n\n` +
+          `status: ${lastStatus}`,
+        "info",
+      );
+    },
+  });
+}

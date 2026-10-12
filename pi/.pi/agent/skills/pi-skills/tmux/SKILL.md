@@ -118,6 +118,22 @@ Therefore:
 # Interacting with panes
 Pane interaction is a fundamental part of tmux. There are two primitives `send-keys` and `capture-pane`. `send-keys` gives you the "write" side of the puzzle, `capture-pane` gives you the "read". Together you can do basically everything
 
+## Echo-sentinel polling (for long-running commands)
+When a command you sent may run for minutes (builds, installs, test suites), avoid fixed long `sleep`s. Instead, append an echo with a unique sentinel to the command, then poll:
+
+```bash
+tmux send-keys -t <target> "nix build .# 2>&1 | tail -15; echo SENTINEL-qx7f2k-done" Enter
+for i in $(seq 1 30); do
+  sleep 10
+  if tmux capture-pane -p -t <target> | grep -q 'SENTINEL-qx7f2k-done'; then break; fi
+done
+```
+
+Rules:
+- **Use a NEW random sentinel every command** — grepping for a stale sentinel from a previous command matches old output and reports false completion.
+- Poll in short intervals (5–10s) with a bounded loop, then capture and read the pane.
+- This responds faster than fixed sleeps and can't be fooled by the human typing in the pane mid-run (they'd have to type the sentinel).
+
 
 Example: interacting with a shell
 
